@@ -4,22 +4,439 @@
 
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
 
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   DESIGN TOKENS
+   Swap these variables to apply a customer's brand kit in one place.
+   Never hardcode colors in component files — always reference a token.
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+:root {
+  /* Brand accent — emerald by default */
+  --color-accent:          #10b981;   /* buttons, focus rings, active states   */
+  --color-accent-hover:    #059669;   /* hover state for accent elements        */
+  --color-accent-subtle:   #ecfdf5;   /* light tinted backgrounds               */
+  --color-accent-text:     #065f46;   /* text on accent-subtle backgrounds      */
+
+  /* App shell */
+  --color-sidebar-bg:      #030712;   /* gray-950 — sidebar background          */
+  --color-sidebar-border:  #1f2937;   /* gray-800 — sidebar dividers            */
+  --color-sidebar-text:    #9ca3af;   /* gray-400 — default nav link text       */
+  --color-sidebar-text-active: #34d399; /* emerald-400 — active nav link        */
+
+  /* Page / content area */
+  --color-page-bg:         #f9fafb;   /* gray-50 — main content background      */
+  --color-card-bg:         #ffffff;
+  --color-card-border:     #f3f4f6;   /* gray-100                               */
+
+  /* Form fields */
+  --color-input-bg:        #f9fafb;   /* gray-50                                */
+  --color-input-border:    #e5e7eb;   /* gray-200                               */
+  --color-input-text:      #111827;   /* gray-900                               */
+  --color-input-placeholder: #9ca3af; /* gray-400                               */
+
+  /* Primary (dark) button — matches OnboardingPage "Next" buttons */
+  --color-btn-primary-bg:       #111827; /* gray-900                            */
+  --color-btn-primary-hover:    #1f2937; /* gray-800                            */
+  --color-btn-primary-text:     #ffffff;
+
+  /* Accent button — matches OnboardingPage "Add Document / Start Training" */
+  --color-btn-accent-bg:        var(--color-accent);
+  --color-btn-accent-hover:     var(--color-accent-hover);
+  --color-btn-accent-text:      #ffffff;
+
+  /* Danger */
+  --color-btn-danger-bg:        #fef2f2; /* red-50                              */
+  --color-btn-danger-text:      #ef4444; /* red-500                             */
+  --color-btn-danger-hover:     #fee2e2; /* red-100                             */
+
+  /* Ghost / secondary */
+  --color-btn-ghost-bg:         #f3f4f6; /* gray-100                            */
+  --color-btn-ghost-text:       #374151; /* gray-700                            */
+  --color-btn-ghost-hover:      #e5e7eb; /* gray-200                            */
+
+  /* Status badge palette */
+  --badge-draft-bg:         #f3f4f6; --badge-draft-text:         #4b5563;
+  --badge-review-bg:        #fffbeb; --badge-review-text:        #b45309;
+  --badge-review-border:    #fde68a;
+  --badge-approved-bg:      #ecfdf5; --badge-approved-text:      #065f46;
+  --badge-approved-border:  #a7f3d0;
+  --badge-published-bg:     var(--color-accent); --badge-published-text: #ffffff;
+  --badge-paused-bg:        #fef2f2; --badge-paused-text:        #dc2626;
+  --badge-paused-border:    #fecaca;
+
+  /* Typography */
+  --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
+
+  /* Radii */
+  --radius-card:   1rem;    /* 16px — dashboard SectionCards               */
+  --radius-input:  0.5rem;  /* 8px  — inputs, selects                      */
+  --radius-btn:    0.5rem;  /* 8px  — buttons                              */
+  --radius-badge:  9999px;  /* pill badges                                 */
+}
+
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   BASE
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 body {
-  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans);
+  background-color: var(--color-page-bg);
+  color: var(--color-input-text);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   SCROLLBAR
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+::-webkit-scrollbar          { width: 5px; height: 5px; }
+::-webkit-scrollbar-track    { background: transparent; }
+::-webkit-scrollbar-thumb    { background: #e5e7eb; border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: #d1d5db; }
 
-/* Line clamp utility */
-.line-clamp-2 {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   COMPONENT CLASSES
+   All reusable UI patterns live here. Component files apply class names only —
+   no raw color/spacing utilities for anything brand-related.
+
+   Naming convention:  .[scope]-[element]--[variant]
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+@layer components {
+
+  /* ── FORM FIELDS ─────────────────────────────────────────────────────────── */
+
+  /*
+   * .field-input
+   * Use on: <input>, <textarea>
+   * Matches the OnboardingPage inputCls pattern exactly.
+   */
+  .field-input {
+    @apply w-full px-4 py-3 text-sm rounded-lg outline-none transition-colors;
+    background-color:    var(--color-input-bg);
+    border:              1px solid var(--color-input-border);
+    color:               var(--color-input-text);
+  }
+  .field-input::placeholder {
+    color: var(--color-input-placeholder);
+  }
+  .field-input:focus {
+    border-color: var(--color-accent);
+    box-shadow:   0 0 0 1px var(--color-accent);
+  }
+
+  /*
+   * .field-select
+   * Use on: <select>
+   */
+  .field-select {
+    @apply field-input appearance-none;
+  }
+
+  /*
+   * .field-textarea
+   * Use on: <textarea>
+   */
+  .field-textarea {
+    @apply field-input resize-none;
+  }
+
+
+  /* ── BUTTONS ─────────────────────────────────────────────────────────────── */
+
+  /* Base — always pair with a variant */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 font-medium text-sm transition-colors disabled:opacity-40;
+    border-radius: var(--radius-btn);
+  }
+
+  /*
+   * .btn--primary  (dark / "Next" style — matches OnboardingPage next buttons)
+   * Use for: primary page actions, "Next", "Save", "Create"
+   */
+  .btn--primary {
+    @apply btn px-5 py-2.5;
+    background-color: var(--color-btn-primary-bg);
+    color:            var(--color-btn-primary-text);
+  }
+  .btn--primary:hover:not(:disabled) { background-color: var(--color-btn-primary-hover); }
+
+  /* Full-width variant for forms / wizard steps */
+  .btn--primary-full { @apply btn--primary w-full py-3; }
+
+  /*
+   * .btn--accent  (emerald — matches OnboardingPage "Add Document / Train")
+   * Use for: confirmatory/positive actions, AI triggers, upload actions
+   */
+  .btn--accent {
+    @apply btn px-5 py-2.5;
+    background-color: var(--color-btn-accent-bg);
+    color:            var(--color-btn-accent-text);
+  }
+  .btn--accent:hover:not(:disabled) { background-color: var(--color-btn-accent-hover); }
+
+  /* Full-width variant */
+  .btn--accent-full { @apply btn--accent w-full py-3; }
+
+  /*
+   * .btn--ghost  (gray — secondary / cancel actions)
+   */
+  .btn--ghost {
+    @apply btn px-5 py-2.5;
+    background-color: var(--color-btn-ghost-bg);
+    color:            var(--color-btn-ghost-text);
+  }
+  .btn--ghost:hover:not(:disabled) { background-color: var(--color-btn-ghost-hover); }
+
+  /*
+   * .btn--icon  (square icon-only button in table rows)
+   */
+  .btn--icon {
+    @apply btn p-2 rounded-lg;
+    background-color: transparent;
+    color: var(--color-sidebar-text);
+  }
+  .btn--icon:hover:not(:disabled) {
+    background-color: var(--color-btn-ghost-bg);
+    color: var(--color-input-text);
+  }
+
+  /*
+   * .btn--icon-danger  (red hover — for delete/trash buttons)
+   */
+  .btn--icon-danger {
+    @apply btn--icon;
+  }
+  .btn--icon-danger:hover:not(:disabled) {
+    background-color: var(--color-btn-danger-bg);
+    color:            var(--color-btn-danger-text);
+  }
+
+
+  /* ── CARDS ───────────────────────────────────────────────────────────────── */
+
+  /*
+   * .page-card
+   * Dashboard SectionCard shell — white box, subtle border + shadow.
+   */
+  .page-card {
+    @apply shadow-sm;
+    background-color: var(--color-card-bg);
+    border:           1px solid var(--color-card-border);
+    border-radius:    var(--radius-card);
+  }
+
+  .page-card__header {
+    @apply flex items-center justify-between px-6 py-4;
+    border-bottom: 1px solid var(--color-card-border);
+  }
+
+  .page-card__body  { @apply p-6; }
+  .page-card__title { @apply text-sm font-semibold; color: var(--color-input-text); }
+  .page-card__subtitle { @apply text-xs mt-0.5; color: var(--color-sidebar-text); }
+
+  /*
+   * .onboarding-card
+   * Centered wizard card — Onboarding / Login pages.
+   */
+  .onboarding-card { @apply bg-white rounded-2xl shadow-2xl overflow-hidden; }
+
+  .onboarding-card__accent-bar {
+    height: 4px;
+    background-color: var(--color-accent);
+  }
+
+  .onboarding-card__body { @apply p-8; }
+
+
+  /* ── METRIC / KPI TILES ──────────────────────────────────────────────────── */
+
+  /*
+   * .metric-tile
+   * MetricSummaryCard wrapper — arrange 3-4 in a grid at page top.
+   */
+  .metric-tile { @apply page-card p-5; }
+
+  .metric-tile__label {
+    @apply text-xs font-medium uppercase tracking-wide;
+    color: var(--color-sidebar-text);
+  }
+  .metric-tile__value   { @apply text-2xl font-bold mt-2; color: var(--color-input-text); }
+  .metric-tile__icon-wrap {
+    @apply w-8 h-8 rounded-lg flex items-center justify-center;
+    background-color: var(--color-page-bg);
+  }
+  .metric-tile__trend--up   { @apply text-xs mt-1.5 font-medium; color: var(--color-accent-text); }
+  .metric-tile__trend--down { @apply text-xs mt-1.5 font-medium; color: #dc2626; }
+
+
+  /* ── STATUS BADGES ───────────────────────────────────────────────────────── */
+
+  /*
+   * Always use .status-badge + one modifier.
+   * CampaignStatusBadge in Layout.jsx maps ad.status → these classes.
+   */
+  .status-badge {
+    @apply inline-flex px-2.5 py-1 text-xs font-medium;
+    border-radius: var(--radius-badge);
+  }
+  .status-badge--draft     { background-color: var(--badge-draft-bg);     color: var(--badge-draft-text); }
+  .status-badge--review    { background-color: var(--badge-review-bg);    color: var(--badge-review-text);
+                             border: 1px solid var(--badge-review-border); }
+  .status-badge--approved  { background-color: var(--badge-approved-bg);  color: var(--badge-approved-text);
+                             border: 1px solid var(--badge-approved-border); }
+  .status-badge--published { background-color: var(--badge-published-bg); color: var(--badge-published-text); }
+  .status-badge--paused    { background-color: var(--badge-paused-bg);    color: var(--badge-paused-text);
+                             border: 1px solid var(--badge-paused-border); }
+
+
+  /* ── SIDEBAR ─────────────────────────────────────────────────────────────── */
+
+  .sidebar {
+    @apply w-60 min-h-screen flex flex-col shrink-0;
+    background-color: var(--color-sidebar-bg);
+    color: #f3f4f6;
+  }
+  .sidebar__brand        { @apply px-5 py-5; border-bottom: 1px solid var(--color-sidebar-border); }
+  .sidebar__logo-mark    { @apply w-7 h-7 rounded-md flex items-center justify-center shrink-0;
+                           background-color: var(--color-accent); }
+  .sidebar__app-name     { @apply text-sm font-semibold tracking-tight text-white; }
+  .sidebar__role-label   { @apply text-xs mt-2 ml-9 capitalize; color: var(--color-sidebar-text); }
+  .sidebar__nav          { @apply flex-1 py-3 px-3; }
+
+  .sidebar__nav-link {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm mb-0.5 transition-colors;
+    color: var(--color-sidebar-text);
+  }
+  .sidebar__nav-link:hover {
+    background-color: rgba(255,255,255,0.06);
+    color: #e5e7eb;
+  }
+  .sidebar__nav-link--active {
+    @apply sidebar__nav-link font-medium;
+    background-color: rgba(16,185,129,0.1);
+    color: var(--color-sidebar-text-active);
+  }
+  .sidebar__signout {
+    @apply flex items-center gap-3 px-6 py-4 text-sm transition-colors;
+    border-top: 1px solid var(--color-sidebar-border);
+    color: var(--color-sidebar-text);
+  }
+  .sidebar__signout:hover { color: #f87171; }
+
+
+  /* ── INLINE ALERTS ───────────────────────────────────────────────────────── */
+
+  .alert--error {
+    @apply flex items-center gap-2 px-4 py-3 rounded-lg text-sm;
+    background-color: #fef2f2; color: #b91c1c; border: 1px solid #fecaca;
+  }
+  .alert--success {
+    @apply flex items-center gap-2 px-4 py-3 rounded-lg text-sm font-medium;
+    background-color: var(--color-accent-subtle);
+    color:            var(--color-accent-text);
+    border:           1px solid #a7f3d0;
+  }
+
+
+  /* ── PAGE HEADER ─────────────────────────────────────────────────────────── */
+
+  .page-header          { @apply mb-8 flex items-center justify-between; }
+  .page-header__title   { @apply text-2xl font-bold; color: var(--color-input-text); }
+  .page-header__subtitle { @apply text-sm mt-1; color: var(--color-sidebar-text); }
+
+
+  /* ── FILTER TAB ROW ──────────────────────────────────────────────────────── */
+
+  .filter-tab {
+    @apply px-4 py-2 rounded-lg text-sm font-medium transition-colors;
+    background-color: var(--color-btn-ghost-bg);
+    color:            var(--color-btn-ghost-text);
+  }
+  .filter-tab:hover { background-color: var(--color-btn-ghost-hover); }
+  .filter-tab--active {
+    @apply filter-tab;
+    background-color: var(--color-btn-primary-bg);
+    color:            var(--color-btn-primary-text);
+  }
+
+
+  /* ── CAMPAIGN TYPE SELECTOR ──────────────────────────────────────────────── */
+
+  .type-option {
+    @apply flex items-center gap-3 p-4 rounded-xl border-2 text-left transition-colors;
+    border-color: var(--color-card-border);
+  }
+  .type-option:hover { border-color: var(--color-input-border); }
+  .type-option--active {
+    @apply type-option;
+    border-color:     var(--color-accent);
+    background-color: var(--color-accent-subtle);
+  }
+
+
+  /* ── PLATFORM TOGGLE PILLS ───────────────────────────────────────────────── */
+
+  .platform-pill {
+    @apply px-4 py-2 rounded-lg text-sm font-medium transition-colors;
+    background-color: var(--color-btn-ghost-bg);
+    color:            var(--color-btn-ghost-text);
+  }
+  .platform-pill:hover { background-color: var(--color-btn-ghost-hover); }
+  .platform-pill--active {
+    @apply platform-pill;
+    background-color: var(--color-btn-primary-bg);
+    color:            var(--color-btn-primary-text);
+  }
+
+
+  /* ── TABLE ROW ───────────────────────────────────────────────────────────── */
+
+  .table-row {
+    @apply flex items-center justify-between py-3 border-b last:border-0 transition-colors;
+    border-color: var(--color-card-border);
+  }
+  .table-row:hover  { background-color: var(--color-page-bg); }
+  .table-row__title { @apply text-sm font-medium; color: var(--color-input-text); }
+  .table-row__meta  { @apply text-xs mt-0.5;      color: var(--color-sidebar-text); }
+
+
+  /* ── USER AVATAR ─────────────────────────────────────────────────────────── */
+
+  .user-avatar {
+    @apply w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold;
+    background-color: var(--color-accent-subtle);
+    color:            var(--color-accent-text);
+  }
+
+
+  /* ── LOADING SPINNER ─────────────────────────────────────────────────────── */
+
+  .spinner {
+    @apply w-4 h-4 rounded-full border-2;
+    border-color:     rgba(255,255,255,0.3);
+    border-top-color: white;
+    animation: spin 0.75s linear infinite;
+  }
+  .spinner--dark {
+    @apply spinner;
+    border-color:     #e5e7eb;
+    border-top-color: var(--color-accent);
+  }
+
+
+  /* ── MISC UTILITIES ──────────────────────────────────────────────────────── */
+
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
 }
+
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   KEYFRAMES
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+@keyframes spin { to { transform: rotate(360deg); } }

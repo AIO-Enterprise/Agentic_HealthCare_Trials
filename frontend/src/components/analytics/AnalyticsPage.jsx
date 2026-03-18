@@ -5,18 +5,19 @@
  *
  * Reusable analytics view used by Admin, Reviewer, and Publisher dashboards.
  * Displays performance charts and optimizer history.
+ * Styles: use classes from index.css only — no raw Tailwind color utilities.
  */
 
 import React, { useState, useEffect } from "react";
-import { DashboardLayout, Card, StatCard } from "../shared/Layout";
+import { PageWithSidebar, SectionCard, MetricSummaryCard } from "../shared/Layout";
 import { adsAPI, analyticsAPI } from "../../services/api";
 import { BarChart3, TrendingUp, Eye, MousePointer } from "lucide-react";
 
 export default function AnalyticsPage() {
-  const [ads, setAds] = useState([]);
-  const [selected, setSelected] = useState(null);
+  const [ads,       setAds]       = useState([]);
+  const [selected,  setSelected]  = useState(null);
   const [analytics, setAnalytics] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading,   setLoading]   = useState(true);
 
   useEffect(() => {
     adsAPI.list("published").then((data) => {
@@ -33,24 +34,28 @@ export default function AnalyticsPage() {
     } catch { setAnalytics([]); }
   };
 
-  // Compute summary from analytics
   const avgMetric = (key) => {
     const vals = analytics.map((a) => a[key]).filter(Boolean);
     return vals.length > 0 ? (vals.reduce((s, v) => s + v, 0) / vals.length).toFixed(2) : "—";
   };
 
   return (
-    <DashboardLayout>
-      <h1 className="text-2xl font-bold text-gray-900 mb-2">Campaign Analytics</h1>
-      <p className="text-sm text-gray-500 mb-8">Performance metrics for published campaigns</p>
+    <PageWithSidebar>
+      <div className="page-header">
+        <div>
+          <h1 className="page-header__title">Campaign Analytics</h1>
+          <p className="page-header__subtitle">Performance metrics for published campaigns</p>
+        </div>
+      </div>
 
-      {/* Campaign selector */}
+      {/* Campaign selector tab row */}
       <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
         {ads.map((ad) => (
-          <button key={ad.id} onClick={() => selectAd(ad)}
-            className={`whitespace-nowrap px-4 py-2 rounded-lg text-sm font-medium transition ${
-              selected?.id === ad.id ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-            }`}>
+          <button
+            key={ad.id}
+            onClick={() => selectAd(ad)}
+            className={selected?.id === ad.id ? "filter-tab--active whitespace-nowrap" : "filter-tab whitespace-nowrap"}
+          >
             {ad.title}
           </button>
         ))}
@@ -58,54 +63,65 @@ export default function AnalyticsPage() {
 
       {selected ? (
         <>
+          {/* KPI row */}
           <div className="grid grid-cols-4 gap-4 mb-8">
-            <StatCard label="Click Rate" value={`${avgMetric("click_rate")}%`} icon={MousePointer} />
-            <StatCard label="Views" value={avgMetric("views")} icon={Eye} />
-            <StatCard label="Conversions" value={avgMetric("conversions")} icon={TrendingUp} />
-            <StatCard label="Retention" value={`${avgMetric("user_retention")}%`} icon={BarChart3} />
+            <MetricSummaryCard label="Click Rate"  value={`${avgMetric("click_rate")}%`}       icon={MousePointer} />
+            <MetricSummaryCard label="Views"       value={avgMetric("views")}                   icon={Eye} />
+            <MetricSummaryCard label="Conversions" value={avgMetric("conversions")}             icon={TrendingUp} />
+            <MetricSummaryCard label="Retention"   value={`${avgMetric("user_retention")}%`}    icon={BarChart3} />
           </div>
 
           <div className="grid grid-cols-2 gap-6">
-            <Card title="Performance Over Time">
+            {/* Performance over time */}
+            <SectionCard title="Performance Over Time">
               {analytics.length === 0 ? (
-                <p className="text-sm text-gray-400">No analytics data recorded yet. Data will appear here once the campaign starts receiving traffic.</p>
+                <p className="text-sm" style={{ color: "var(--color-sidebar-text)" }}>
+                  No analytics data recorded yet. Data will appear here once the campaign starts receiving traffic.
+                </p>
               ) : (
-                <div className="space-y-2">
-                  {analytics.slice(0, 10).map((a, i) => (
-                    <div key={a.id} className="flex items-center justify-between py-2 text-sm border-b border-gray-50">
-                      <span className="text-gray-500 text-xs">{new Date(a.recorded_at).toLocaleDateString()}</span>
-                      <span className="text-gray-700">CTR: {a.click_rate || "—"}%</span>
-                      <span className="text-gray-700">Views: {a.views || "—"}</span>
-                      <span className="text-gray-700">Conv: {a.conversions || "—"}</span>
+                <div className="space-y-1">
+                  {analytics.slice(0, 10).map((a) => (
+                    <div key={a.id} className="table-row text-sm px-1">
+                      <span style={{ color: "var(--color-sidebar-text)", fontSize: "0.75rem" }}>
+                        {new Date(a.recorded_at).toLocaleDateString()}
+                      </span>
+                      <span style={{ color: "#374151" }}>CTR: {a.click_rate || "—"}%</span>
+                      <span style={{ color: "#374151" }}>Views: {a.views || "—"}</span>
+                      <span style={{ color: "#374151" }}>Conv: {a.conversions || "—"}</span>
                     </div>
                   ))}
                 </div>
               )}
-            </Card>
+            </SectionCard>
 
-            <Card title="Demographics Breakdown">
+            {/* Demographics */}
+            <SectionCard title="Demographics Breakdown">
               {analytics.length === 0 ? (
-                <p className="text-sm text-gray-400">No demographics data yet</p>
+                <p className="text-sm" style={{ color: "var(--color-sidebar-text)" }}>
+                  No demographics data yet
+                </p>
               ) : (
                 <div className="space-y-2">
                   {analytics.filter((a) => a.demographics).slice(0, 5).map((a, i) => (
-                    <div key={i} className="bg-gray-50 rounded-lg p-3">
-                      <pre className="text-xs text-gray-700">{JSON.stringify(a.demographics, null, 2)}</pre>
+                    <div key={i} className="code-preview">
+                      <pre>{JSON.stringify(a.demographics, null, 2)}</pre>
                     </div>
                   ))}
                 </div>
               )}
-            </Card>
+            </SectionCard>
           </div>
         </>
       ) : (
-        <Card>
-          <div className="text-center py-12 text-gray-400">
-            <BarChart3 size={48} className="mx-auto mb-3 opacity-30" />
-            <p className="text-sm">{loading ? "Loading campaigns..." : "No published campaigns to analyze"}</p>
+        <SectionCard>
+          <div className="empty-state">
+            <BarChart3 size={48} className="empty-state__icon" />
+            <p className="empty-state__text">
+              {loading ? "Loading campaigns…" : "No published campaigns to analyze"}
+            </p>
           </div>
-        </Card>
+        </SectionCard>
       )}
-    </DashboardLayout>
+    </PageWithSidebar>
   );
 }

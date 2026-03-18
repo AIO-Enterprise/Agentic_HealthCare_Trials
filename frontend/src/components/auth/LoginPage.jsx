@@ -4,6 +4,7 @@
  * Dependencies: AuthContext, api.js
  *
  * Role-based sign-in page. Routes to appropriate dashboard after login.
+ * Styles: use classes from index.css only — no raw Tailwind color utilities.
  */
 
 import React, { useState } from "react";
@@ -12,24 +13,23 @@ import { useAuth } from "../../contexts/AuthContext";
 import { LogIn } from "lucide-react";
 
 const ROLE_ROUTES = {
-  admin: "/admin",
-  reviewer: "/reviewer",
+  admin:           "/admin",
+  reviewer:        "/reviewer",
   ethics_reviewer: "/ethics",
-  publisher: "/publisher",
+  publisher:       "/publisher",
 };
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
+  const [email,    setEmail]    = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
-  const navigate = useNavigate();
+  const [error,    setError]    = useState("");
+  const [loading,  setLoading]  = useState(false);
+  const { login }  = useAuth();
+  const navigate   = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError("");
-    setLoading(true);
+    setError(""); setLoading(true);
     try {
       const user = await login(email, password);
       navigate(ROLE_ROUTES[user.role] || "/");
@@ -41,60 +41,91 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 via-gray-800 to-indigo-900">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white tracking-tight">MarketingAI</h1>
-          <p className="text-gray-400 mt-2">Sign in to your dashboard</p>
+    <div className="auth-page">
+
+      {/* Subtle grid background — same as OnboardingPage */}
+      <div className="fixed inset-0" style={{
+        backgroundColor: "var(--color-sidebar-bg)",
+        backgroundImage: `linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
+                          linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px)`,
+        backgroundSize: "48px 48px",
+      }} />
+
+      <div className="relative w-full max-w-md">
+
+        {/* Brand mark */}
+        <div className="flex items-center justify-center gap-2.5 mb-10">
+          <div className="sidebar__logo-mark w-8 h-8 rounded-lg">
+            <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: "var(--color-sidebar-bg)" }} />
+          </div>
+          <span className="sidebar__app-name text-lg">AgenticMarketing</span>
         </div>
 
-        <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-2xl p-8 space-y-5">
-          {error && (
-            <div className="bg-red-50 text-red-700 px-4 py-3 rounded-lg text-sm">
-              {error}
+        {/* Login card */}
+        <div className="onboarding-card">
+          <div className="onboarding-card__accent-bar" />
+          <div className="onboarding-card__body space-y-5">
+
+            <div className="text-center">
+              <h1 className="text-xl font-bold" style={{ color: "var(--color-input-text)" }}>
+                Sign in to your dashboard
+              </h1>
+              <p className="text-sm mt-1" style={{ color: "var(--color-sidebar-text)" }}>
+                Enter your credentials to continue
+              </p>
             </div>
-          )}
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
-              placeholder="you@company.com"
-              required
-            />
+            {error && (
+              <div className="alert--error">
+                {error}
+              </div>
+            )}
+
+            {/* Using a form element here is fine — no ProtectedRoute, just a plain page */}
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1.5" style={{ color: "var(--color-input-text)" }}>
+                  Email
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@company.com"
+                  required
+                  className="field-input"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1.5" style={{ color: "var(--color-input-text)" }}>
+                  Password
+                </label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  className="field-input"
+                />
+              </div>
+
+              <button type="submit" disabled={loading} className="btn--primary-full mt-2">
+                <LogIn size={18} />
+                {loading ? "Signing in…" : "Sign In"}
+              </button>
+            </form>
+
+            <p className="text-center text-sm" style={{ color: "var(--color-sidebar-text)" }}>
+              New company?{" "}
+              <Link to="/onboarding" className="font-medium transition-colors"
+                style={{ color: "var(--color-accent)" }}>
+                Get Started
+              </Link>
+            </p>
           </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
-              placeholder="••••••••"
-              required
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-2.5 rounded-lg hover:bg-indigo-700 transition disabled:opacity-50 font-medium"
-          >
-            <LogIn size={18} />
-            {loading ? "Signing in..." : "Sign In"}
-          </button>
-
-          <p className="text-center text-sm text-gray-500">
-            New company?{" "}
-            <Link to="/onboarding" className="text-indigo-600 hover:underline font-medium">
-              Get Started
-            </Link>
-          </p>
-        </form>
+        </div>
       </div>
     </div>
   );

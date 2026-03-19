@@ -25,7 +25,20 @@ async function request(endpoint, options = {}) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Request failed");
+    // FastAPI can return detail as a string OR an array of validation error objects
+    let message;
+    if (Array.isArray(err.detail)) {
+      // Pydantic validation errors: [{loc: [...], msg: "...", type: "..."}]
+      message = err.detail
+        .map((d) => {
+          const field = Array.isArray(d.loc) ? d.loc.filter(x => x !== "body").join(" → ") : "";
+          return field ? `${field}: ${d.msg}` : d.msg;
+        })
+        .join("\n");
+    } else {
+      message = err.detail || err.message || `HTTP ${res.status}: ${res.statusText}`;
+    }
+    throw new Error(message);
   }
 
   return res.json();
@@ -34,10 +47,10 @@ async function request(endpoint, options = {}) {
 // ─── M2: Auth ────────────────────────────────────────────────────────────────
 
 export const authAPI = {
-  login: (email, password) =>
+  login: (email, password, company, role) =>
     request("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, company, role }),
     }),
 };
 

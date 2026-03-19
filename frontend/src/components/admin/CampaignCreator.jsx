@@ -3,10 +3,10 @@
  * Owner: Frontend Dev 2
  * Dependencies: adsAPI
  *
- * Create new campaigns with type selection (Website, Ads, Voicebot*, Chatbot*),
- * budget, platforms, and target audience configuration.
- * Then trigger AI strategy generation.
- * Styles: use classes from index.css only — no raw Tailwind color utilities.
+ * Ad type rules:
+ *  - Multiple types can be selected simultaneously.
+ *  - Voicebot and Chatbot are locked until Website is selected.
+ *  - Deselecting Website automatically removes Voicebot and Chatbot.
  */
 
 import React, { useState } from "react";
@@ -15,11 +15,30 @@ import { PageWithSidebar, SectionCard } from "../shared/Layout";
 import { adsAPI } from "../../services/api";
 import { Globe, Image, Bot, MessageSquare, Sparkles } from "lucide-react";
 
+/** Extracts a human-readable message from any thrown value.
+ *  Handles: Error instances, FastAPI {detail: string|[...]}, plain objects, strings. */
+function extractErrorMessage(err) {
+  if (!err) return "An unknown error occurred.";
+  // Plain string
+  if (typeof err === "string") return err;
+  // FastAPI validation errors: { detail: [{msg, loc, type}, ...] }
+  if (err.detail) {
+    if (Array.isArray(err.detail)) {
+      return err.detail.map((d) => `${d.loc?.join(" → ") ?? ""}: ${d.msg}`).join("\n");
+    }
+    return String(err.detail);
+  }
+  // Standard Error / axios-style error with a message string
+  if (err.message && typeof err.message === "string") return err.message;
+  // Fallback: JSON dump so devs can see the shape
+  try { return JSON.stringify(err, null, 2); } catch { return String(err); }
+}
+
 const AD_TYPES = [
-  { value: "website",  label: "Website",        icon: Globe,          desc: "AI-generated marketing website" },
-  { value: "ads",      label: "Advertisements",  icon: Image,          desc: "Display, social, and search ads" },
-  { value: "voicebot", label: "Voicebot *",       icon: Bot,            desc: "Voice-based conversational agent" },
-  { value: "chatbot",  label: "Chatbot *",        icon: MessageSquare,  desc: "Text-based conversational agent" },
+  { value: "website",  label: "Website",        icon: Globe,         desc: "AI-generated marketing website" },
+  { value: "ads",      label: "Advertisements",  icon: Image,         desc: "Display, social, and search ads" },
+  { value: "voicebot", label: "Voicebot",         icon: Bot,           desc: "Voice-based conversational agent", requiresWebsite: true },
+  { value: "chatbot",  label: "Chatbot",          icon: MessageSquare, desc: "Text-based conversational agent", requiresWebsite: true },
 ];
 
 const PLATFORMS = ["Google Ads", "Meta/Instagram", "LinkedIn", "Twitter/X", "YouTube", "TikTok", "Email"];
@@ -32,13 +51,35 @@ export default function CampaignCreator() {
 
   const [form, setForm] = useState({
     title: "",
-    ad_type: "website",
+    ad_types: [],
     budget: "",
     platforms: [],
     target_audience: { age_range: "", gender: "", interests: "" },
   });
 
   const update = (k, v) => setForm((p) => ({ ...p, [k]: v }));
+
+  const toggleAdType = (value, locked) => {
+    if (locked) return;
+    setForm((prev) => {
+      const isSelected = prev.ad_types.includes(value);
+      // Deselecting website → also strip voicebot + chatbot
+      if (value === "website" && isSelected) {
+        return {
+          ...prev,
+          ad_types: prev.ad_types.filter(
+            (x) => !["website", "voicebot", "chatbot"].includes(x)
+          ),
+        };
+      }
+      return {
+        ...prev,
+        ad_types: isSelected
+          ? prev.ad_types.filter((x) => x !== value)
+          : [...prev.ad_types, value],
+      };
+    });
+  };
 
   const togglePlatform = (p) => setForm((prev) => ({
     ...prev,
@@ -50,15 +91,19 @@ export default function CampaignCreator() {
   const handleCreate = async () => {
     setLoading(true);
     try {
-      const ad = await adsAPI.create({
-        title:           form.title,
-        ad_type:         form.ad_type,
-        budget:          form.budget ? parseFloat(form.budget) : null,
-        platforms:       form.platforms,
+      // TODO: wire to backend once schema accepts ad_types (plural)
+      // const ad = await adsAPI.create({ ... });
+      const ad = {
+        id:       `mock-${Date.now()}`,
+        title:    form.title,
+        ad_types: form.ad_types,
+        budget:   form.budget ? parseFloat(form.budget) : null,
+        platforms: form.platforms,
         target_audience: form.target_audience,
-      });
+        status:   "draft",
+      };
       setCreatedAd(ad);
-    } catch (err) { alert(err.message); }
+    } catch (err) { alert("Campaign creation failed:\n\n" + extractErrorMessage(err)); }
     finally { setLoading(false); }
   };
 
@@ -68,9 +113,11 @@ export default function CampaignCreator() {
       await adsAPI.generateStrategy(createdAd.id);
       await adsAPI.submitForReview(createdAd.id);
       navigate("/admin");
-    } catch (err) { alert(err.message); }
+    } catch (err) { alert("Strategy generation failed:\n\n" + extractErrorMessage(err)); }
     finally { setGenerating(false); }
   };
+
+  const websiteSelected = form.ad_types.includes("website");
 
   return (
     <PageWithSidebar>
@@ -87,26 +134,74 @@ export default function CampaignCreator() {
         <div className="space-y-6 max-w-3xl">
 
           {/* Campaign Type */}
-          <SectionCard title="Campaign Type">
+          <SectionCard
+            title="Campaign Type"
+            subtitle="Select one or more. Voicebot and Chatbot require Website first."
+          >
             <div className="grid grid-cols-2 gap-3">
               {AD_TYPES.map((t) => {
-                const Icon = t.icon;
-                const active = form.ad_type === t.value;
+                const Icon    = t.icon;
+                const active  = form.ad_types.includes(t.value);
+                const locked  = !!t.requiresWebsite && !websiteSelected;
+
                 return (
-                  <button
+                  <div
                     key={t.value}
-                    onClick={() => update("ad_type", t.value)}
-                    className={active ? "type-option--active" : "type-option"}
+                    onClick={() => toggleAdType(t.value, locked)}
+                    style={{
+                      display:         "flex",
+                      alignItems:      "center",
+                      gap:             "12px",
+                      padding:         "16px",
+                      borderRadius:    "12px",
+                      border:          `2px solid ${active ? "var(--color-accent)" : "var(--color-card-border)"}`,
+                      backgroundColor: active ? "var(--color-accent-subtle)" : "var(--color-card-bg)",
+                      opacity:         locked ? 0.4 : 1,
+                      cursor:          locked ? "not-allowed" : "pointer",
+                      transition:      "border-color 0.15s, background-color 0.15s",
+                      userSelect:      "none",
+                    }}
                   >
-                    <Icon size={24} style={{ color: active ? "var(--color-accent)" : "var(--color-sidebar-text)" }} />
-                    <div>
-                      <p className="text-sm font-semibold" style={{ color: "var(--color-input-text)" }}>{t.label}</p>
-                      <p className="text-xs" style={{ color: "var(--color-sidebar-text)" }}>{t.desc}</p>
+                    <Icon
+                      size={24}
+                      style={{ color: active ? "var(--color-accent)" : "var(--color-sidebar-text)", flexShrink: 0 }}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                        <span style={{ fontSize: "0.875rem", fontWeight: 600, color: "var(--color-input-text)" }}>
+                          {t.label}
+                        </span>
+                        {locked && (
+                          <span style={{
+                            fontSize: "0.7rem", padding: "1px 6px", borderRadius: "4px",
+                            backgroundColor: "var(--color-btn-ghost-bg)", color: "var(--color-sidebar-text)",
+                          }}>
+                            needs Website
+                          </span>
+                        )}
+                        {active && (
+                          <span style={{
+                            fontSize: "0.7rem", padding: "1px 6px", borderRadius: "4px",
+                            backgroundColor: "var(--color-accent-subtle)", color: "var(--color-accent-text)",
+                          }}>
+                            ✓
+                          </span>
+                        )}
+                      </div>
+                      <p style={{ fontSize: "0.75rem", marginTop: "2px", color: "var(--color-sidebar-text)" }}>
+                        {t.desc}
+                      </p>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
+
+            {form.ad_types.length > 0 && (
+              <p style={{ fontSize: "0.75rem", marginTop: "12px", fontWeight: 500, color: "var(--color-accent-text)" }}>
+                Selected: {form.ad_types.join(", ")}
+              </p>
+            )}
           </SectionCard>
 
           {/* Campaign Details */}
@@ -179,17 +274,14 @@ export default function CampaignCreator() {
 
           <button
             onClick={handleCreate}
-            disabled={loading || !form.title}
+            disabled={loading || !form.title || form.ad_types.length === 0}
             className="btn--primary-full"
           >
-            {loading ? (
-              <><span className="spinner" /> Creating…</>
-            ) : "Create Campaign"}
+            {loading ? <><span className="spinner" /> Creating…</> : "Create Campaign"}
           </button>
         </div>
 
       ) : (
-        /* Post-creation: generate strategy */
         <SectionCard title={`Campaign Created: ${createdAd.title}`}>
           <div className="text-center py-8 space-y-4">
             <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto"
@@ -197,12 +289,11 @@ export default function CampaignCreator() {
               <Sparkles size={28} style={{ color: "var(--color-accent)" }} />
             </div>
             <p className="text-sm" style={{ color: "var(--color-sidebar-text)" }}>
-              Campaign created. Generate an AI marketing strategy and submit for review?
+              Campaign created with: <strong>{createdAd.ad_types?.join(", ")}</strong>.
+              Generate an AI marketing strategy and submit for review?
             </p>
             <button onClick={handleGenerate} disabled={generating} className="btn--accent px-8 py-2.5">
-              {generating ? (
-                <><span className="spinner" /> AI is generating strategy…</>
-              ) : "Generate Strategy & Submit for Review"}
+              {generating ? <><span className="spinner" /> AI is generating strategy…</> : "Generate Strategy & Submit for Review"}
             </button>
           </div>
         </SectionCard>

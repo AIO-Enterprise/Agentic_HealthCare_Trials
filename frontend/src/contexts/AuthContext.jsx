@@ -29,12 +29,13 @@ export function AuthProvider({ children }) {
     setLoading(false);
   }, []);
 
-  const login = useCallback(async (email, password) => {
-    const data = await authAPI.login(email, password);
+  const login = useCallback(async (email, password , company, role) => {
+    const data = await authAPI.login(email, password, company, role);
     const userData = {
       id: data.user_id,
       role: data.role,
       companyId: data.company_id,
+      companyName: data.companyName,
       token: data.access_token,
     };
     localStorage.setItem("token", data.access_token);
@@ -56,6 +57,7 @@ export function AuthProvider({ children }) {
     isAuthenticated: !!user,
     role: user?.role,
     companyId: user?.companyId,
+    companyName: user?.companyName
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

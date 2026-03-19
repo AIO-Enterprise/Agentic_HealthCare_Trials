@@ -98,29 +98,54 @@ export default function UserManagement() {
 
       {/* Team member list */}
       <SectionCard title={`Team Members (${users.length})`}>
-        <div className="space-y-1">
+        <div className="space-y-2">
           {users.map((u) => (
-            <div key={u.id} className="table-row px-2">
-              {/* Left: avatar + name */}
+            <div key={u.id} style={{
+              display:         "flex",
+              alignItems:      "center",
+              justifyContent:  "space-between",
+              padding:         "12px 16px",
+              borderRadius:    "10px",
+              border:          "1px solid var(--color-card-border)",
+              backgroundColor: "var(--color-card-bg)",
+              transition:      "background-color 0.15s",
+            }}>
+              {/* Left: avatar + name + email */}
               <div className="flex items-center gap-3">
-                <div className="user-avatar">
-                  {u.full_name?.charAt(0)?.toUpperCase()}
-                </div>
+                <div className="user-avatar">{u.full_name?.charAt(0)?.toUpperCase()}</div>
                 <div>
                   <p className="table-row__title">{u.full_name}</p>
                   <p className="table-row__meta">{u.email}</p>
                 </div>
               </div>
 
-              {/* Right: role badge + active indicator */}
-              <div className="flex items-center gap-3">
-                <span className="status-badge status-badge--draft capitalize">
-                  {u.role?.replace("_", " ")}
+              {/* Right: role badge with inline status dot */}
+              <div style={{
+                display:         "flex",
+                alignItems:      "center",
+                gap:             "6px",
+                padding:         "4px 10px",
+                borderRadius:    "20px",
+                border:          "1px solid var(--color-card-border)",
+                backgroundColor: "var(--color-page-bg)",
+              }}>
+                <span style={{
+                  width:           "7px",
+                  height:          "7px",
+                  borderRadius:    "50%",
+                  flexShrink:      0,
+                  backgroundColor: u.is_active ? "var(--color-accent)" : "#f87171",
+                  boxShadow:       u.is_active ? "0 0 0 2px var(--color-accent-subtle)" : "none",
+                }} />
+                <span style={{
+                  fontSize:    "0.75rem",
+                  fontWeight:  500,
+                  color:       "var(--color-input-text)",
+                  textTransform: "capitalize",
+                  whiteSpace:  "nowrap",
+                }}>
+                  {u.role?.replace(/_/g, " ")}
                 </span>
-                <span
-                  className="w-2 h-2 rounded-full"
-                  style={{ backgroundColor: u.is_active ? "var(--color-accent)" : "#f87171" }}
-                />
               </div>
             </div>
           ))}

@@ -67,14 +67,38 @@ export default function AdminDashboard() {
             No campaigns yet. Create your first one!
           </p>
         ) : (
-          <div className="space-y-1">
+          <div className="space-y-2">
             {ads.slice(0, 5).map((ad) => (
-              <div key={ad.id} className="table-row px-1">
-                <div>
-                  <p className="table-row__title">{ad.title}</p>
-                  <p className="table-row__meta">
-                    {ad.ad_type} · {new Date(ad.created_at).toLocaleDateString()}
-                  </p>
+              <div key={ad.id} style={{
+                display:         "flex",
+                alignItems:      "center",
+                justifyContent:  "space-between",
+                padding:         "12px 16px",
+                borderRadius:    "10px",
+                border:          "1px solid var(--color-card-border)",
+                backgroundColor: "var(--color-card-bg)",
+                transition:      "background-color 0.15s",
+              }}>
+                {/* Left: icon + title + meta */}
+                <div className="flex items-center gap-3">
+                  <div style={{
+                    width:           "36px",
+                    height:          "36px",
+                    borderRadius:    "8px",
+                    backgroundColor: "var(--color-accent-subtle)",
+                    display:         "flex",
+                    alignItems:      "center",
+                    justifyContent:  "center",
+                    flexShrink:      0,
+                  }}>
+                    <Megaphone size={15} style={{ color: "var(--color-accent)" }} />
+                  </div>
+                  <div>
+                    <p className="table-row__title">{ad.title}</p>
+                    <p className="table-row__meta">
+                      {ad.ad_type} · {new Date(ad.created_at).toLocaleDateString()}
+                    </p>
+                  </div>
                 </div>
                 <CampaignStatusBadge status={ad.status} />
               </div>

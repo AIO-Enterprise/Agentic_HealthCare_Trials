@@ -10,6 +10,7 @@ POST /onboarding/train        — Trigger AI training (skill initialization)
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 from typing import List
 
@@ -32,10 +33,15 @@ async def onboard_company(body: OnboardingRequest, db: AsyncSession = Depends(ge
     Creates the company record, registers the ADMIN user,
     and sets up the dashboard branding.
     """
-    # Check duplicate
+    # Check duplicate company name
     existing = await db.execute(select(Company).where(Company.name == body.company_name))
     if existing.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="Company already exists")
+        raise HTTPException(status_code=409, detail="company_exists")
+
+    # Check duplicate email
+    existing_user = await db.execute(select(User).where(User.email == body.admin_email))
+    if existing_user.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="email_exists")
 
     # Create company
     company = Company(
@@ -55,7 +61,12 @@ async def onboard_company(body: OnboardingRequest, db: AsyncSession = Depends(ge
         role=UserRole.ADMIN,
     )
     db.add(admin)
-    await db.flush()
+
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="email_exists")
 
     company.onboarded = True
 

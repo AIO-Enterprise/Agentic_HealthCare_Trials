@@ -3,18 +3,22 @@ Main Application Entry Point
 Registers all route modules and initializes the database.
 """
 
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 
 from app.db.database import init_db
-from app.api.routes import auth, onboarding, users, advertisements, documents, analytics
+from app.api.routes import auth, onboarding, users, advertisements, documents, analytics, brand_kit
+from app.core.config import settings
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
+    # Startup — create DB tables and ensure static directories exist
     await init_db()
+    os.makedirs(os.path.join(settings.STATIC_DIR, "logos"), exist_ok=True)
     yield
     # Shutdown (cleanup if needed)
 
@@ -35,8 +39,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Static file serving — logos and brand assets
+os.makedirs(settings.STATIC_DIR, exist_ok=True)
+app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
+
 # ─── Register Route Modules ──────────────────────────────────────────────────
-# Each module is independently developed and tested
 
 app.include_router(auth.router,           prefix="/api")
 app.include_router(onboarding.router,     prefix="/api")
@@ -44,6 +51,7 @@ app.include_router(users.router,          prefix="/api")
 app.include_router(documents.router,      prefix="/api")
 app.include_router(advertisements.router, prefix="/api")
 app.include_router(analytics.router,      prefix="/api")
+app.include_router(brand_kit.router,      prefix="/api")
 
 
 @app.get("/api/health")

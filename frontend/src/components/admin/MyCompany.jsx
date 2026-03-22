@@ -4,9 +4,7 @@
  * Dependencies: documentsAPI
  *
  * Manage company documents: USP, Compliances, Policies, Marketing Goals, etc.
- * DOC_TYPES is imported from Constants — single source of truth shared with
- * UploadDocumentsStep (onboarding). Adding a document mirrors the same
- * category-pill → file-upload flow used during onboarding.
+ * Clicking a document tile opens a preview modal (PDF/TXT inline, DOCX/DOC download).
  *
  * Styles: use classes from index.css only — no raw Tailwind color utilities.
  */
@@ -14,10 +12,12 @@
 import React, { useState, useEffect, useRef } from "react";
 import { PageWithSidebar, SectionCard } from "../shared/Layout";
 import { documentsAPI } from "../../services/api";
-import { FileText, Plus, Pencil, Trash2, Upload, X, File, CheckCircle2 } from "lucide-react";
+import {
+  FileText, Plus, Pencil, Trash2, Upload, X, File, CheckCircle2, Download,
+} from "lucide-react";
 import { DOC_TYPES, ACCEPTED_DOC_FORMATS, ACCEPTED_DOC_MIME } from "../onboarding/Constants";
 
-// ── File helpers (mirrors UploadDocumentsStep) ─────────────────────────────
+// ── File helpers ───────────────────────────────────────────────────────────
 const FILE_LABEL = {
   "application/pdf": "PDF",
   "application/msword": "DOC",
@@ -31,23 +31,252 @@ function fileSizeStr(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// ── Add-document form (same UX as onboarding UploadDocumentsStep) ──────────
+// Derive the file extension from the stored file_path string.
+function extFromPath(filePath) {
+  if (!filePath) return null;
+  const name = filePath.split("/").pop();
+  const parts = name.split(".");
+  return parts.length > 1 ? parts.pop().toLowerCase() : null;
+}
+
+// Derive the original filename from the stored file_path string.
+function nameFromPath(filePath) {
+  if (!filePath) return null;
+  return filePath.split("/").pop();
+}
+
+// Returns the preview mode for a given file extension.
+// "pdf"      — render with <iframe>
+// "text"     — fetch and render in <pre>
+// "download" — no inline render, offer download only
+function previewMode(ext) {
+  if (!ext) return "download";
+  if (ext === "pdf") return "pdf";
+  if (["txt", "md"].includes(ext)) return "text";
+  return "download";
+}
+
+
+// ── Preview Modal ──────────────────────────────────────────────────────────
+function PreviewModal({ doc, onClose }) {
+  const ext  = extFromPath(doc.file_path);
+  const mode = previewMode(ext);
+  const url  = documentsAPI.getFileUrl(doc.id);
+
+  const [textContent, setTextContent] = useState(null);
+  const [textError,   setTextError]   = useState(false);
+
+  useEffect(() => {
+    if (mode !== "text") return;
+    fetch(url)
+      .then((r) => {
+        if (!r.ok) throw new Error("fetch failed");
+        return r.text();
+      })
+      .then(setTextContent)
+      .catch(() => setTextError(true));
+  }, [url, mode]);
+
+  // Close on backdrop click
+  const handleBackdrop = (e) => {
+    if (e.target === e.currentTarget) onClose();
+  };
+
+  const typeInfo = DOC_TYPES.find((t) => t.value === doc.doc_type);
+
+  return (
+    <div
+      onClick={handleBackdrop}
+      style={{
+        position: "fixed", inset: 0, zIndex: 50,
+        backgroundColor: "rgba(0,0,0,0.6)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: "24px",
+      }}
+    >
+      <div style={{
+        backgroundColor: "var(--color-card-bg)",
+        border: "1px solid var(--color-card-border)",
+        borderRadius: "14px",
+        width: "100%", maxWidth: "860px",
+        maxHeight: "90vh",
+        display: "flex", flexDirection: "column",
+        overflow: "hidden",
+      }}>
+
+        {/* Modal header */}
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "16px 20px",
+          borderBottom: "1px solid var(--color-card-border)",
+          flexShrink: 0,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", minWidth: 0 }}>
+            <div style={{
+              width: "32px", height: "32px", borderRadius: "7px", flexShrink: 0,
+              backgroundColor: "rgba(16,185,129,0.12)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: "0.95rem",
+            }}>
+              {typeInfo?.icon ?? <FileText size={15} style={{ color: "var(--color-sidebar-text)" }} />}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <p style={{
+                fontWeight: 600, fontSize: "0.95rem",
+                color: "var(--color-input-text)",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              }}>
+                {doc.title}
+              </p>
+              <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)" }}>
+                {nameFromPath(doc.file_path) ?? (typeInfo?.label ?? doc.doc_type?.replace(/_/g, " "))}
+                {" · "}v{doc.version}
+                {ext ? ` · ${ext.toUpperCase()}` : ""}
+              </p>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0, marginLeft: "12px" }}>
+            {/* Download button — always available if file exists */}
+            {doc.file_path && (
+              <a
+                href={url}
+                download
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  display: "flex", alignItems: "center", gap: "5px",
+                  padding: "6px 12px", borderRadius: "7px", fontSize: "0.78rem",
+                  fontWeight: 500, cursor: "pointer", textDecoration: "none",
+                  border: "1px solid var(--color-input-border)",
+                  backgroundColor: "var(--color-input-bg)",
+                  color: "var(--color-input-text)",
+                }}
+              >
+                <Download size={13} />
+                Download
+              </a>
+            )}
+            <button
+              onClick={onClose}
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                padding: "4px", display: "flex", borderRadius: "6px",
+                color: "var(--color-sidebar-text)",
+              }}
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+
+        {/* Modal body */}
+        <div style={{ flex: 1, overflow: "hidden", position: "relative", minHeight: "600px" }}>
+
+          {/* PDF */}
+          {mode === "pdf" && (
+            <iframe
+              src={url}
+              title={doc.title}
+              style={{ width: "100%", height: "100%", border: "none", display: "block", minHeight: "600px" }}
+            />
+          )}
+
+          {/* Plain text / Markdown */}
+          {mode === "text" && (
+            <div style={{ height: "100%", overflowY: "auto", padding: "20px 24px" }}>
+              {textError ? (
+                <p style={{ color: "#ef4444", fontSize: "0.875rem" }}>
+                  Failed to load file content.
+                </p>
+              ) : textContent === null ? (
+                <p style={{ color: "var(--color-sidebar-text)", fontSize: "0.875rem" }}>
+                  Loading...
+                </p>
+              ) : (
+                <pre style={{
+                  margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word",
+                  fontSize: "0.82rem", lineHeight: 1.7,
+                  color: "var(--color-input-text)",
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                }}>
+                  {textContent}
+                </pre>
+              )}
+            </div>
+          )}
+
+          {/* DOCX / DOC — no browser renderer */}
+          {mode === "download" && (
+            <div style={{
+              display: "flex", flexDirection: "column", alignItems: "center",
+              justifyContent: "center", gap: "12px",
+              padding: "48px 24px", textAlign: "center",
+            }}>
+              <FileText size={40} style={{ color: "var(--color-sidebar-text)", opacity: 0.5 }} />
+              <p style={{ color: "var(--color-input-text)", fontWeight: 600, fontSize: "0.95rem" }}>
+                Preview not available for {ext ? ext.toUpperCase() : "this file type"}
+              </p>
+              <p style={{ color: "var(--color-sidebar-text)", fontSize: "0.82rem", maxWidth: "340px" }}>
+                Download the file to view it in your local application.
+              </p>
+              {doc.file_path && (
+                <a
+                  href={url}
+                  download
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: "6px",
+                    padding: "9px 18px", borderRadius: "8px", fontSize: "0.85rem",
+                    fontWeight: 600, cursor: "pointer", textDecoration: "none",
+                    backgroundColor: "rgba(16,185,129,0.1)",
+                    border: "1px solid var(--color-accent)",
+                    color: "var(--color-accent)",
+                  }}
+                >
+                  <Download size={15} />
+                  Download File
+                </a>
+              )}
+              {!doc.file_path && (
+                <p style={{ color: "var(--color-sidebar-text)", fontSize: "0.82rem" }}>
+                  No file attached to this document.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ── Add-document form ──────────────────────────────────────────────────────
 function AddDocumentForm({ existingDocs, onAdd, onCancel, loading }) {
   const fileInputRef                = useRef(null);
   const [selectedType, setSelected] = useState(null);
-  const [customLabel,  setCustom]   = useState("");
   const [pendingFile,  setPending]  = useState(null);
   const [fileError,    setFileErr]  = useState("");
 
   const isOther  = selectedType === "other";
   const chosen   = DOC_TYPES.find((t) => t.value === selectedType);
-  const docTitle = isOther ? customLabel.trim() : chosen?.label ?? "";
-  const canAdd   = selectedType && pendingFile && (!isOther || customLabel.trim());
+
+  const titleFromFile = () => chosen?.label ?? selectedType;
+
+  const docTitle = chosen?.label ?? "";
+
+  const canAdd = selectedType && pendingFile;
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (!ACCEPTED_DOC_MIME.includes(file.type)) {
+    const allowed = ACCEPTED_DOC_MIME ?? [
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "text/plain",
+      "text/markdown",
+    ];
+    if (file.type && !allowed.includes(file.type)) {
       setFileErr("Unsupported format. Please use PDF, DOCX, DOC, or TXT.");
       return;
     }
@@ -63,24 +292,17 @@ function AddDocumentForm({ existingDocs, onAdd, onCancel, loading }) {
 
   const selectCategory = (value) => {
     setSelected(value);
-    setCustom("");
     clearFile();
   };
 
   const handleAdd = () => {
     if (!canAdd) return;
-    onAdd({
-      doc_type:  selectedType,
-      title:     docTitle,
-      file:      pendingFile,
-      file_name: pendingFile.name,
-      file_size: pendingFile.size,
-      file_type: pendingFile.type,
-    });
+    const doc_type = selectedType === "other" ? "input" : selectedType;
+    onAdd({ doc_type, title: chosen?.label ?? selectedType, file: pendingFile });
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" onKeyDown={(e) => { if (e.key === "Enter" && canAdd && !loading) { e.preventDefault(); handleAdd(); } }}>
 
       {/* Category pills */}
       <div>
@@ -117,18 +339,7 @@ function AddDocumentForm({ existingDocs, onAdd, onCancel, loading }) {
         </div>
       </div>
 
-      {/* Custom label for "Other" */}
-      {isOther && (
-        <input
-          placeholder="Document name (e.g. Brand Story, Org Chart…) *"
-          value={customLabel}
-          onChange={(e) => setCustom(e.target.value)}
-          className="field-input"
-          autoFocus
-        />
-      )}
-
-      {/* File upload zone — visible once a category is picked */}
+      {/* File upload zone */}
       {selectedType && (
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide mb-2"
@@ -139,6 +350,7 @@ function AddDocumentForm({ existingDocs, onAdd, onCancel, loading }) {
           {!pendingFile ? (
             <button type="button"
               onClick={() => fileInputRef.current?.click()}
+              onKeyDown={(e) => e.key === "Enter" && e.preventDefault()}
               className="w-full border-2 border-dashed rounded-lg py-7 flex flex-col items-center gap-2"
               style={{ borderColor: "var(--color-input-border)", backgroundColor: "transparent", cursor: "pointer" }}
             >
@@ -168,7 +380,7 @@ function AddDocumentForm({ existingDocs, onAdd, onCancel, loading }) {
                   {pendingFile.name}
                 </p>
                 <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)" }}>
-                  {fileSizeStr(pendingFile.size)}{docTitle ? ` · "${docTitle}"` : ""}
+                  {fileSizeStr(pendingFile.size)}
                 </p>
               </div>
               <button type="button" onClick={clearFile}
@@ -200,18 +412,17 @@ function AddDocumentForm({ existingDocs, onAdd, onCancel, loading }) {
   );
 }
 
-// ── Edit-document form (title + content only; doc_type is locked) ──────────
+
+// ── Edit-document form (title only; doc_type is locked) ────────────────────
 function EditDocumentForm({ doc, onSave, onCancel, loading }) {
   const [title,   setTitle]   = useState(doc.title);
-  const [content, setContent] = useState(doc.content || "");
-
-  const typeInfo  = DOC_TYPES.find((t) => t.value === doc.doc_type);
+  const [content, setContent] = useState(doc.content ?? "");
+  const typeInfo = DOC_TYPES.find((t) => t.value === doc.doc_type);
   const typeLabel = typeInfo ? `${typeInfo.icon ?? ""} ${typeInfo.label}`.trim() : doc.doc_type;
 
   return (
     <div className="space-y-4">
 
-      {/* Locked type indicator */}
       <div style={{
         display: "inline-flex", alignItems: "center", gap: "6px",
         padding: "5px 12px", borderRadius: "999px", fontSize: "0.78rem",
@@ -251,13 +462,15 @@ function EditDocumentForm({ doc, onSave, onCancel, loading }) {
   );
 }
 
+
 // ── Main page ──────────────────────────────────────────────────────────────
 export default function MyCompany() {
-  const [docs,       setDocs]       = useState([]);
-  const [filter,     setFilter]     = useState("");
-  const [mode,       setMode]       = useState(null);    // null | "add" | "edit"
-  const [editingDoc, setEditingDoc] = useState(null);
-  const [saving,     setSaving]     = useState(false);
+  const [docs,        setDocs]        = useState([]);
+  const [filter,      setFilter]      = useState("");
+  const [mode,        setMode]        = useState(null);   // null | "add" | "edit"
+  const [editingDoc,  setEditingDoc]  = useState(null);
+  const [previewDoc,  setPreviewDoc]  = useState(null);   // doc to preview, or null
+  const [saving,      setSaving]      = useState(false);
 
   useEffect(() => {
     documentsAPI.list(filter || undefined).then(setDocs).catch(console.error);
@@ -265,45 +478,57 @@ export default function MyCompany() {
 
   const closeForm = () => { setMode(null); setEditingDoc(null); };
 
-  // ── Add (file upload path) ──────────────────────────────────────────────
-  const handleAdd = async (entry) => {
+  // ── Add (file upload) ────────────────────────────────────────────────────
+  const handleAdd = async ({ doc_type, title, file }) => {
     setSaving(true);
     try {
-      // TODO: when backend accepts multipart, pass entry.file directly.
-      // For now create with title + doc_type; content populated server-side after parsing.
-      const created = await documentsAPI.create({
-        doc_type: entry.doc_type,
-        title:    entry.title,
-        content:  "",
-      });
+      const created = await documentsAPI.upload(doc_type, title, file);
       setDocs((p) => [...p, created]);
+      // TODO: trigger AI retraining — POST /onboarding/train
+      // Any change to company documents should retrain Curator + Reviewer skills
+      // so the SkillConfig reflects the latest document set.
       closeForm();
     } catch (err) { alert(err.message); }
     finally { setSaving(false); }
   };
 
-  // ── Edit (title + content) ──────────────────────────────────────────────
+  // ── Edit (title + content) ───────────────────────────────────────────────
   const handleSaveEdit = async ({ title, content }) => {
     setSaving(true);
     try {
       const updated = await documentsAPI.update(editingDoc.id, { title, content });
       setDocs((p) => p.map((d) => (d.id === editingDoc.id ? updated : d)));
+      // TODO: trigger AI retraining — POST /onboarding/train
       closeForm();
     } catch (err) { alert(err.message); }
     finally { setSaving(false); }
   };
 
-  const handleDelete = async (id) => {
+  const handleDelete = async (e, id) => {
+    // Prevent the tile click from firing the preview
+    e.stopPropagation();
     if (!confirm("Delete this document?")) return;
     await documentsAPI.delete(id);
     setDocs((p) => p.filter((d) => d.id !== id));
+    // TODO: trigger AI retraining — POST /onboarding/train
   };
 
-  // Filter tabs: All + every named type (exclude "other" — it's for ad-hoc uploads)
+  const handleEditClick = (e, doc) => {
+    e.stopPropagation();
+    setEditingDoc(doc);
+    setMode("edit");
+  };
+
   const filterTabs = [{ value: "", label: "All" }, ...DOC_TYPES.filter((t) => t.value !== "other")];
 
   return (
     <PageWithSidebar>
+
+      {/* Preview modal */}
+      {previewDoc && (
+        <PreviewModal doc={previewDoc} onClose={() => setPreviewDoc(null)} />
+      )}
+
       {/* Page header */}
       <div className="page-header">
         <div>
@@ -364,11 +589,33 @@ export default function MyCompany() {
         )}
 
         {docs.map((doc) => {
-          const typeInfo = DOC_TYPES.find((t) => t.value === doc.doc_type);
+          const typeInfo  = DOC_TYPES.find((t) => t.value === doc.doc_type);
+          const ext       = extFromPath(doc.file_path);
+          const fileName  = nameFromPath(doc.file_path);
+          const hasFile   = !!doc.file_path;
+
           return (
-            <div key={doc.id} className="page-card page-card__body flex items-start justify-between">
+            <div
+              key={doc.id}
+              onClick={() => hasFile && setPreviewDoc(doc)}
+              className="page-card page-card__body flex items-start justify-between"
+              style={{
+                cursor: hasFile ? "pointer" : "default",
+                transition: "box-shadow 0.15s, border-color 0.15s",
+              }}
+              onMouseEnter={(e) => {
+                if (hasFile) {
+                  e.currentTarget.style.boxShadow = "0 0 0 1.5px var(--color-accent)";
+                  e.currentTarget.style.borderColor = "var(--color-accent)";
+                }
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.boxShadow = "";
+                e.currentTarget.style.borderColor = "";
+              }}
+            >
               <div className="flex gap-4" style={{ flex: 1, minWidth: 0 }}>
-                {/* Category emoji badge */}
+                {/* Category badge */}
                 <div style={{
                   width: "36px", height: "36px", borderRadius: "8px", flexShrink: 0,
                   backgroundColor: "rgba(16,185,129,0.12)",
@@ -383,9 +630,10 @@ export default function MyCompany() {
                     {doc.title}
                   </p>
                   <p className="text-xs mt-0.5" style={{ color: "var(--color-sidebar-text)" }}>
-                    {typeInfo?.label ?? doc.doc_type?.replace(/_/g, " ")}
+                    {fileName ?? (typeInfo?.label ?? doc.doc_type?.replace(/_/g, " "))}
                     {" · "}v{doc.version}
-                    {doc.file_name && ` · ${doc.file_name}`}
+                    {ext ? ` · ${ext.toUpperCase()}` : ""}
+                    {!hasFile && " · no file"}
                   </p>
                   {doc.content && (
                     <p className="text-sm mt-2 line-clamp-2" style={{ color: "#4b5563" }}>{doc.content}</p>
@@ -393,11 +641,18 @@ export default function MyCompany() {
                 </div>
               </div>
 
+              {/* Action buttons — stopPropagation so tile click doesn't fire */}
               <div className="flex gap-1" style={{ flexShrink: 0, marginLeft: "12px" }}>
-                <button onClick={() => { setEditingDoc(doc); setMode("edit"); }} className="btn--icon">
+                <button
+                  onClick={(e) => handleEditClick(e, doc)}
+                  className="btn--icon"
+                >
                   <Pencil size={16} />
                 </button>
-                <button onClick={() => handleDelete(doc.id)} className="btn--icon-danger">
+                <button
+                  onClick={(e) => handleDelete(e, doc.id)}
+                  className="btn--icon-danger"
+                >
                   <Trash2 size={16} />
                 </button>
               </div>

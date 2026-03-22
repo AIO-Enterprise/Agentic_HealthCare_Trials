@@ -6,7 +6,7 @@ services:
     volumes:
       - ./backend:/app
       - ./skills:/app/skills
-      - ./uploads:/app/uploads
+      - ./backend/uploads:/app/uploads
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - SECRET_KEY=${SECRET_KEY:-dev-secret-change-in-production}

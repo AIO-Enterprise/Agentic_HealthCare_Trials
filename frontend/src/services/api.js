@@ -148,6 +148,36 @@ export const documentsAPI = {
       body: JSON.stringify(data),
     }),
 
+  // Upload a document with a file attachment (multipart).
+  // Used by MyCompany "Add Document" — mirrors onboarding/documents.
+  upload: async (docType, title, file) => {
+    const token = localStorage.getItem("token");
+    const formData = new FormData();
+    formData.append("doc_type", docType);
+    formData.append("title", title);
+    formData.append("file", file);
+
+    const res = await fetch(`${API_BASE}/documents/upload`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `Document upload failed (HTTP ${res.status})`);
+    }
+    return res.json();
+  },
+
+  // Returns the authenticated URL to stream the file for preview.
+  // Token is passed as a query param so the browser can load it directly
+  // in an iframe or anchor without needing a custom Authorization header.
+  // When storage moves to Azure Blob, this will return the SAS URL instead.
+  getFileUrl: (docId) => {
+    const token = localStorage.getItem("token");
+    return `${API_BASE}/documents/${docId}/file?token=${token}`;
+  },
+
   update: (docId, data) =>
     request(`/documents/${docId}`, {
       method: "PATCH",

@@ -16,9 +16,11 @@ from app.core.config import settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup — create DB tables and ensure static directories exist
+    # Startup — create DB tables and ensure storage directories exist
     await init_db()
     os.makedirs(os.path.join(settings.STATIC_DIR, "logos"), exist_ok=True)
+    os.makedirs(os.path.join(settings.UPLOAD_DIR, "logos"), exist_ok=True)
+    os.makedirs(os.path.join(settings.UPLOAD_DIR, "docs"), exist_ok=True)
     yield
     # Shutdown (cleanup if needed)
 
@@ -39,9 +41,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Static file serving — logos and brand assets
+# Static file serving — logos and brand assets under ./static/
 os.makedirs(settings.STATIC_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
+
+# Upload file serving — documents and logos under ./uploads/
+os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
 
 # ─── Register Route Modules ──────────────────────────────────────────────────
 

@@ -116,6 +116,7 @@ class DocumentOut(BaseModel):
     doc_type: str
     title: str
     content: Optional[str] = None
+    file_path: Optional[str] = None
     priority: int
     version: int
     updated_at: datetime

@@ -3,7 +3,10 @@ File Storage Service
 Owner: Backend Dev 2
 
 Abstraction layer for all file persistence.
-Currently saves to local disk under ./uploads/.
+Currently saves to local disk under <backend_root>/uploads/.
+
+BASE_DIR is resolved to an absolute path anchored to this file's location,
+so it is always correct regardless of where uvicorn is launched from.
 
 TODO: Swap to Azure Blob Storage here only — no other files need to change.
   Steps when ready:
@@ -14,26 +17,38 @@ TODO: Swap to Azure Blob Storage here only — no other files need to change.
     5. Remove the Docker volume mount for ./uploads in docker-compose.yml
 
 Usage:
-    from app.services.storage import storage
+    from app.services.storage import file_storage
 
-    url = await storage.save(file, subfolder="logos", filename="myfile.png")
+    url = await file_storage.save(file, subfolder="logos", filename="myfile.png")
     # returns "/uploads/logos/myfile.png" (local) or full Azure URL (blob)
 """
 
 import os
-import uuid
 from fastapi import UploadFile
+
+# Resolve absolute path to <backend_root>/uploads/ regardless of CWD.
+# This file lives at backend/app/services/storage/storage.py, so:
+#   __file__         → .../backend/app/services/storage/storage.py
+#   4x dirname       → .../backend/
+#   + "uploads"      → .../backend/uploads/
+_BACKEND_ROOT = os.path.dirname(
+    os.path.dirname(
+        os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))
+        )
+    )
+)
 
 
 class LocalStorageBackend:
     """
-    Saves files to ./uploads/<subfolder>/ on the local filesystem.
+    Saves files to <backend_root>/uploads/<subfolder>/ on the local filesystem.
     Returns a relative URL path string stored in the DB.
     Files persist across container restarts only if a Docker volume
     is mounted at ./uploads — see docker-compose.yml TODO.
     """
 
-    BASE_DIR = "./uploads"
+    BASE_DIR = os.path.join(_BACKEND_ROOT, "uploads")
 
     async def save(self, file: UploadFile, subfolder: str, filename: str) -> str:
         """

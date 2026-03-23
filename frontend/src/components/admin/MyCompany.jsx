@@ -11,11 +11,14 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { PageWithSidebar, SectionCard } from "../shared/Layout";
-import { documentsAPI } from "../../services/api";
+import { documentsAPI, brandKitAPI } from "../../services/api";
+import { useAuth } from "../../contexts/AuthContext";
+import { applyBrandTheme, resetBrandTheme, isDefaultThemeOverrideActive } from "../../services/theme";
 import {
   FileText, Plus, Pencil, Trash2, Upload, X, File, CheckCircle2, Download,
+  Palette, Check, ChevronDown, ChevronUp, RotateCcw,
 } from "lucide-react";
-import { DOC_TYPES, ACCEPTED_DOC_FORMATS, ACCEPTED_DOC_MIME } from "../onboarding/Constants";
+import { DOC_TYPES, ACCEPTED_DOC_FORMATS, ACCEPTED_DOC_MIME, BRAND_PRESETS, DEFAULT_PRESETS } from "../onboarding/Constants";
 
 // ── File helpers ───────────────────────────────────────────────────────────
 const FILE_LABEL = {
@@ -463,8 +466,360 @@ function EditDocumentForm({ doc, onSave, onCancel, loading }) {
 }
 
 
+
+// ── Brand Kit Panel ────────────────────────────────────────────────────────
+function BrandKitPanel() {
+  const [open,           setOpen]           = useState(false);
+  const [brandKit,       setBrandKit]       = useState(null);
+  const [selectedPreset, setSelectedPreset] = useState(null);
+  const [brand,          setBrand]          = useState(null);
+  const [saving,         setSaving]         = useState(false);
+  const [saved,          setSaved]          = useState(false);
+  const [error,          setError]          = useState("");
+  const [usingDefault,   setUsingDefault]   = useState(isDefaultThemeOverrideActive);
+  const brandPdfRef = useRef(null);
+  const [brandPdfFile, setBrandPdfFile] = useState(null);
+  const { user, companyIndustry } = useAuth();
+
+  const handleUseDefault = () => {
+    resetBrandTheme();
+    setUsingDefault(true);
+  };
+
+  const handleRestoreBrandTheme = () => {
+    if (brandKit) {
+      applyBrandTheme(brandKit);
+      setUsingDefault(false);
+    }
+  };
+
+  // Fetch current brand kit on mount
+  useEffect(() => {
+    brandKitAPI.get()
+      .then((bk) => {
+        setBrandKit(bk);
+        setBrand({
+          primaryColor:   bk.primary_color   || null,
+          secondaryColor: bk.secondary_color || null,
+          accentColor:    bk.accent_color    || null,
+          primaryFont:    bk.primary_font    || null,
+          secondaryFont:  bk.secondary_font  || null,
+          adjectives:     bk.adjectives      || "",
+          dos:            bk.dos             || "",
+          donts:          bk.donts           || "",
+        });
+        setSelectedPreset(bk.preset_name || null);
+      })
+      .catch(() => {
+        // No brand kit yet — start blank
+        setBrand({
+          primaryColor: null, secondaryColor: null, accentColor: null,
+          primaryFont: null, secondaryFont: null,
+          adjectives: "", dos: "", donts: "",
+        });
+      });
+  }, []);
+
+  // Match company industry to a preset group — fallback to Technology
+  const industryPresets = (() => {
+    const key = Object.keys(BRAND_PRESETS).find(
+      (k) => companyIndustry?.toLowerCase().includes(k.toLowerCase())
+    );
+    return key ? BRAND_PRESETS[key] : DEFAULT_PRESETS;
+  })();
+
+  const applyPreset = (preset) => {
+    const { name, ...brandFields } = preset;
+    setBrand(brandFields);
+    setSelectedPreset(preset.name);
+    setBrandPdfFile(null);
+    if (brandPdfRef.current) brandPdfRef.current.value = "";
+    setSaved(false);
+  };
+
+  const handleBrandPdfChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.type !== "application/pdf") { setError("Please upload a PDF file."); return; }
+    setBrandPdfFile(file);
+    setSelectedPreset(null);
+    setError("");
+    setSaved(false);
+  };
+
+  const clearBrandPdf = () => {
+    setBrandPdfFile(null);
+    if (brandPdfRef.current) brandPdfRef.current.value = "";
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError("");
+    setSaved(false);
+    try {
+      const payload = {
+        primary_color:   brand.primaryColor   || null,
+        secondary_color: brand.secondaryColor || null,
+        accent_color:    brand.accentColor    || null,
+        primary_font:    brand.primaryFont    || null,
+        secondary_font:  brand.secondaryFont  || null,
+        adjectives:      brand.adjectives     || null,
+        dos:             brand.dos            || null,
+        donts:           brand.donts          || null,
+        preset_name:     selectedPreset       || null,
+      };
+
+      // Use update if brand kit exists, create if it doesn't
+      const updated = brandKit
+        ? await brandKitAPI.update(payload)
+        : await brandKitAPI.create(payload);
+
+      setBrandKit(updated);
+      applyBrandTheme(updated);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (err) {
+      setError(err.message || "Failed to save brand kit.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Current live colors for the preview strip
+  const previewColors = [
+    { label: "Primary",  color: brand?.primaryColor  || "#030712" },
+    { label: "Accent",   color: brand?.accentColor   || "#10b981" },
+    { label: "Secondary",color: brand?.secondaryColor|| "#0f172a" },
+  ];
+
+  return (
+    <div className="page-card mb-8">
+
+      {/* Header row — always visible */}
+      <button
+        onClick={() => setOpen((p) => !p)}
+        style={{
+          width: "100%", display: "flex", alignItems: "center",
+          justifyContent: "space-between",
+          padding: "16px 24px", background: "none", border: "none",
+          cursor: "pointer", borderRadius: "var(--radius-card)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <div style={{
+            width: "32px", height: "32px", borderRadius: "8px", flexShrink: 0,
+            backgroundColor: "var(--color-accent)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <Palette size={15} style={{ color: "#fff" }} />
+          </div>
+          <div style={{ textAlign: "left" }}>
+            <p className="page-card__title">Brand Kit</p>
+            <p className="page-card__subtitle">
+              {selectedPreset ? `Active: ${selectedPreset}` : "Colors, fonts and tone for your company"}
+            </p>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", flexShrink: 0 }}>
+          {/* Color preview strip */}
+          <div style={{ display: "flex", gap: "4px" }}>
+            {previewColors.map(({ label, color }) => (
+              <div
+                key={label}
+                title={label}
+                style={{
+                  width: "20px", height: "20px", borderRadius: "5px",
+                  backgroundColor: color,
+                  border: "1px solid rgba(0,0,0,0.12)",
+                }}
+              />
+            ))}
+          </div>
+          {open
+            ? <ChevronUp size={16} style={{ color: "var(--color-sidebar-text)" }} />
+            : <ChevronDown size={16} style={{ color: "var(--color-sidebar-text)" }} />
+          }
+        </div>
+      </button>
+
+      {/* Expanded editor */}
+      {open && brand && (
+        <div style={{ borderTop: "1px solid var(--color-card-border)", padding: "20px 24px" }}>
+
+          {/* Preset picker */}
+          <p className="text-xs font-semibold uppercase tracking-wide mb-3"
+            style={{ color: "var(--color-sidebar-text)" }}>
+            Starter Presets
+          </p>
+          <div className="space-y-2 mb-5">
+            {industryPresets.map((preset) => (
+              <button
+                key={preset.name}
+                type="button"
+                onClick={() => applyPreset(preset)}
+                style={{
+                  width: "100%", padding: "11px 14px", borderRadius: "10px",
+                  cursor: "pointer",
+                  border: `1px solid ${selectedPreset === preset.name ? "var(--color-accent)" : "var(--color-input-border)"}`,
+                  backgroundColor: selectedPreset === preset.name
+                    ? "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.07)"
+                    : "var(--color-input-bg)",
+                  display: "flex", alignItems: "center", gap: "12px", textAlign: "left",
+                  transition: "all 0.15s",
+                  opacity: brandPdfFile ? 0.4 : 1,
+                }}
+              >
+                <div style={{ display: "flex", gap: "3px", flexShrink: 0 }}>
+                  {[preset.primaryColor, preset.secondaryColor, preset.accentColor].map((c, ci) => (
+                    <div key={ci} style={{
+                      width: "16px", height: "16px", borderRadius: "4px",
+                      backgroundColor: c, border: "1px solid rgba(0,0,0,0.15)",
+                    }} />
+                  ))}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--color-input-text)", marginBottom: "1px" }}>
+                    {preset.name}
+                  </p>
+                  <p style={{ fontSize: "0.7rem", color: "var(--color-sidebar-text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {preset.primaryFont} · {preset.adjectives}
+                  </p>
+                </div>
+                {selectedPreset === preset.name && (
+                  <Check size={14} style={{ color: "var(--color-accent)", flexShrink: 0 }} />
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* OR divider */}
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "16px" }}>
+            <div style={{ flex: 1, height: "1px", backgroundColor: "var(--color-input-border)" }} />
+            <span style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", fontWeight: 500 }}>OR</span>
+            <div style={{ flex: 1, height: "1px", backgroundColor: "var(--color-input-border)" }} />
+          </div>
+
+          {/* PDF upload */}
+          <p className="text-xs font-semibold uppercase tracking-wide mb-2"
+            style={{ color: "var(--color-sidebar-text)" }}>
+            Upload Brand Guidelines PDF
+          </p>
+          {!brandPdfFile ? (
+            <button
+              type="button"
+              onClick={() => brandPdfRef.current?.click()}
+              className="w-full border-2 border-dashed rounded-lg py-6 flex flex-col items-center gap-2"
+              style={{
+                borderColor: "var(--color-input-border)", backgroundColor: "transparent",
+                cursor: "pointer", opacity: selectedPreset ? 0.4 : 1, marginBottom: "20px",
+              }}
+            >
+              <Upload size={20} style={{ color: "var(--color-sidebar-text)" }} />
+              <span style={{ fontSize: "0.85rem", color: "var(--color-sidebar-text)" }}>
+                Click to upload your brand guidelines
+              </span>
+              <span style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", opacity: 0.6 }}>
+                PDF · AI will extract colors, fonts and tone automatically
+              </span>
+            </button>
+          ) : (
+            <div style={{
+              display: "flex", alignItems: "center", gap: "10px",
+              padding: "12px 14px", borderRadius: "10px", marginBottom: "20px",
+              border: "1px solid var(--color-accent)",
+              backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.07)",
+            }}>
+              <FileText size={18} style={{ color: "var(--color-accent)", flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--color-input-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {brandPdfFile.name}
+                </p>
+                <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)" }}>
+                  {(brandPdfFile.size / 1024).toFixed(0)} KB · AI will parse this during training
+                </p>
+              </div>
+              <Check size={14} style={{ color: "var(--color-accent)", flexShrink: 0 }} />
+              <button type="button" onClick={clearBrandPdf}
+                style={{ background: "none", border: "none", cursor: "pointer", padding: "2px", display: "flex" }}>
+                <X size={14} style={{ color: "var(--color-sidebar-text)" }} />
+              </button>
+            </div>
+          )}
+          <input
+            ref={brandPdfRef}
+            type="file"
+            accept="application/pdf"
+            onChange={handleBrandPdfChange}
+            className="hidden"
+          />
+
+          {/* Error */}
+          {error && (
+            <div className="alert--error mb-4">{error}</div>
+          )}
+
+          {/* Default theme toggle */}
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "12px 14px", borderRadius: "10px", marginBottom: "16px",
+            border: `1px solid ${usingDefault ? "var(--color-input-border)" : "var(--color-input-border)"}`,
+            backgroundColor: usingDefault ? "var(--color-page-bg)" : "transparent",
+          }}>
+            <div>
+              <p style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--color-input-text)" }}>
+                Use Platform Default Theme
+              </p>
+              <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", marginTop: "2px" }}>
+                {usingDefault
+                  ? "Currently active — brand kit is saved but not applied"
+                  : "Override your brand kit with the platform default"
+                }
+              </p>
+            </div>
+            {usingDefault ? (
+              <button
+                onClick={handleRestoreBrandTheme}
+                className="btn--ghost px-4 py-2 text-sm"
+                style={{ flexShrink: 0 }}
+              >
+                Restore Brand Kit
+              </button>
+            ) : (
+              <button
+                onClick={handleUseDefault}
+                className="btn--ghost px-4 py-2 text-sm"
+                style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: "6px" }}
+              >
+                <RotateCcw size={13} /> Use Default
+              </button>
+            )}
+          </div>
+
+          {/* Save row */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "12px" }}>
+            {saved && (
+              <div className="alert--success py-2 px-3">
+                <Check size={14} strokeWidth={2.5} /> Brand kit saved
+              </div>
+            )}
+            <button
+              onClick={handleSave}
+              disabled={saving || (!brand.primaryColor && !brand.accentColor && !brandPdfFile && !selectedPreset)}
+              className="btn--accent px-6 py-2.5"
+            >
+              {saving ? <><span className="spinner" /> Saving…</> : "Save Brand Kit"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────
 export default function MyCompany() {
+  const { role } = useAuth();
   const [docs,        setDocs]        = useState([]);
   const [filter,      setFilter]      = useState("");
   const [mode,        setMode]        = useState(null);   // null | "add" | "edit"
@@ -528,6 +883,9 @@ export default function MyCompany() {
       {previewDoc && (
         <PreviewModal doc={previewDoc} onClose={() => setPreviewDoc(null)} />
       )}
+
+      {/* Brand kit — admin only */}
+      {role === "admin" && <BrandKitPanel />}
 
       {/* Page header */}
       <div className="page-header">

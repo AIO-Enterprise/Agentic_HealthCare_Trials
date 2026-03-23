@@ -17,9 +17,12 @@
 
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { onboardingAPI, authAPI, brandKitAPI } from "../../services/api";
-import { useAuth } from "../../contexts/AuthContext";
 import { X } from "lucide-react";
+
+import { onboardingAPI, authAPI, brandKitAPI } from "../../services/api";
+import { applyBrandTheme } from "../../services/theme";
+
+import { useAuth } from "../../contexts/AuthContext";
 
 import StepIndicator       from "./StepIndicator";
 import CompanyInfoStep     from "./steps/CompanyInfoStep";
@@ -78,11 +81,11 @@ export default function OnboardingPage() {
 
   // ── Step 3: brand kit ─────────────────────────────────────────────────────
   const [brand, setBrand] = useState({
-    primaryColor:   "#10b981",
-    secondaryColor: "#0f172a",
-    accentColor:    "#6366f1",
-    primaryFont:    "DM Sans",
-    secondaryFont:  "Merriweather",
+    primaryColor:   null,
+    secondaryColor: null,
+    accentColor:    null,
+    primaryFont:    null,
+    secondaryFont:  null,
     adjectives:     "",
     dos:            "",
     donts:          "",
@@ -139,11 +142,12 @@ export default function OnboardingPage() {
 
       // 4. Hydrate AuthContext so ProtectedRoute allows the /admin redirect.
       hydrateUser({
-        id:          loginRes.user_id,
-        role:        loginRes.role,
-        companyId:   loginRes.company_id,
-        companyName: loginRes.company_name,
-        token:       loginRes.access_token,
+        id:              loginRes.user_id,
+        role:            loginRes.role,
+        companyId:       loginRes.company_id,
+        companyName:     loginRes.company_name,
+        companyIndustry: form.industry || null,
+        token:           loginRes.access_token,
       });
 
       // 5. Upload logo — token is now in localStorage so auth header is set.
@@ -161,18 +165,25 @@ export default function OnboardingPage() {
         );
       }
 
-      // 7. Create brand kit.
-      await brandKitAPI.create({
-        primary_color:   brand.primaryColor,
-        secondary_color: brand.secondaryColor,
-        accent_color:    brand.accentColor,
-        primary_font:    brand.primaryFont,
-        secondary_font:  brand.secondaryFont,
-        adjectives:      brand.adjectives || null,
-        dos:             brand.dos || null,
-        donts:           brand.donts || null,
-        preset_name:     selectedPreset || null,
-      });
+      // 7. Create brand kit — only if the user made a selection or uploaded a PDF.
+      //    If the user skipped, all color fields are null and there is nothing
+      //    meaningful to save, so we skip the API call entirely and leave the
+      //    platform running on its default theme.
+      const hasBrandData = brand.primaryColor || brand.accentColor || brandPdfFile || selectedPreset;
+      if (hasBrandData) {
+        const createdBrandKit = await brandKitAPI.create({
+          primary_color:   brand.primaryColor,
+          secondary_color: brand.secondaryColor,
+          accent_color:    brand.accentColor,
+          primary_font:    brand.primaryFont,
+          secondary_font:  brand.secondaryFont,
+          adjectives:      brand.adjectives || null,
+          dos:             brand.dos || null,
+          donts:           brand.donts || null,
+          preset_name:     selectedPreset || null,
+        });
+        applyBrandTheme(createdBrandKit);
+      }
 
       // 8. Trigger AI skill initialization — generates customized Curator + Reviewer skills.
       await onboardingAPI.triggerTraining();

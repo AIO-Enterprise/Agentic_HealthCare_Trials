@@ -11,7 +11,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { authAPI, brandKitAPI } from "../services/api";
-import { applyBrandTheme, resetBrandTheme } from "../services/theme";
+import { applyBrandTheme, resetBrandTheme, isDefaultThemeOverrideActive } from "../services/theme";
 
 const AuthContext = createContext(null);
 
@@ -31,11 +31,12 @@ export function AuthProvider({ children }) {
     if (token && stored) {
       try {
         setUser(JSON.parse(stored));
-        // Fire-and-forget — theme application is non-critical.
-        // If the brand kit fetch fails, the app still loads with default theme.
-        brandKitAPI.get()
-          .then((brandKit) => applyBrandTheme(brandKit))
-          .catch(() => {});
+        // Only apply brand theme if the user hasn't chosen to use the default.
+        if (!isDefaultThemeOverrideActive()) {
+          brandKitAPI.get()
+            .then((brandKit) => applyBrandTheme(brandKit))
+            .catch(() => {});
+        }
       } catch {
         localStorage.clear();
       }
@@ -58,11 +59,13 @@ export function AuthProvider({ children }) {
     localStorage.setItem("user", JSON.stringify(userData));
     setUser(userData);
 
-    // Fetch and apply brand theme after login.
+    // Fetch and apply brand theme after login — skip if user prefers default.
     // Token is already in localStorage so brandKitAPI.get() is authenticated.
-    brandKitAPI.get()
-      .then((brandKit) => applyBrandTheme(brandKit))
-      .catch(() => {});
+    if (!isDefaultThemeOverrideActive()) {
+      brandKitAPI.get()
+        .then((brandKit) => applyBrandTheme(brandKit))
+        .catch(() => {});
+    }
 
     return userData;
   }, []);
@@ -79,7 +82,8 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(() => {
     localStorage.clear();
-    resetBrandTheme();
+    // clearFlag=true removes the override so the next company starts fresh.
+    resetBrandTheme({ clearFlag: true });
     setUser(null);
   }, []);
 

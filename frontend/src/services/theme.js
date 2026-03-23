@@ -148,18 +148,34 @@ function loadGoogleFont(fontFamily) {
   document.head.appendChild(link);
 }
 
+// ── Theme override flag ─────────────────────────────────────────────────────
+
+// When this localStorage key is set to "default", AuthContext will skip
+// applyBrandTheme on login and session restore, preserving the platform default.
+// The flag is cleared automatically when the user actively saves a brand kit.
+const THEME_OVERRIDE_KEY = "theme_override";
+
+export function isDefaultThemeOverrideActive() {
+  return localStorage.getItem(THEME_OVERRIDE_KEY) === "default";
+}
+
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
  * Applies brand kit colors and font to the document root CSS variables.
  * Safe to call multiple times — each call overwrites the previous theme.
  * No-ops gracefully if the brand kit is missing or has no fields.
+ * Clears the default-theme override flag so the brand theme stays active
+ * across refreshes after the user saves a new brand kit.
  *
  * @param {object|null} brandKit  — response from GET /brand-kit/
  *   Expected fields: primary_color, accent_color, primary_font (all optional)
  */
 export function applyBrandTheme(brandKit) {
   if (!brandKit) return;
+
+  // Saving a brand kit always clears the "use default" override.
+  localStorage.removeItem(THEME_OVERRIDE_KEY);
 
   const root = document.documentElement;
 
@@ -187,10 +203,14 @@ export function applyBrandTheme(brandKit) {
 }
 
 /**
- * Resets all brand theme tokens back to the defaults defined in index.css.
- * Call this on logout so the next company's login starts from a clean slate.
+ * Resets all brand theme tokens back to the defaults defined in index.css
+ * and sets the persistent override flag so the default theme survives
+ * page refreshes. The brand kit in the DB is untouched.
+ *
+ * Pass clearFlag=true on logout to also remove the override flag so the
+ * next company's login starts clean.
  */
-export function resetBrandTheme() {
+export function resetBrandTheme({ clearFlag = false } = {}) {
   const root = document.documentElement;
   const props = [
     "--color-accent",
@@ -208,4 +228,10 @@ export function resetBrandTheme() {
     "--font-sans",
   ];
   props.forEach((prop) => root.style.removeProperty(prop));
+
+  if (clearFlag) {
+    localStorage.removeItem(THEME_OVERRIDE_KEY);
+  } else {
+    localStorage.setItem(THEME_OVERRIDE_KEY, "default");
+  }
 }

@@ -13,10 +13,10 @@ import React, { useState, useEffect, useRef } from "react";
 import { PageWithSidebar, SectionCard } from "../shared/Layout";
 import { documentsAPI, brandKitAPI } from "../../services/api";
 import { useAuth } from "../../contexts/AuthContext";
-import { applyBrandTheme } from "../../services/theme";
+import { applyBrandTheme, resetBrandTheme, isDefaultThemeOverrideActive } from "../../services/theme";
 import {
   FileText, Plus, Pencil, Trash2, Upload, X, File, CheckCircle2, Download,
-  Palette, Check, ChevronDown, ChevronUp,
+  Palette, Check, ChevronDown, ChevronUp, RotateCcw,
 } from "lucide-react";
 import { DOC_TYPES, ACCEPTED_DOC_FORMATS, ACCEPTED_DOC_MIME, BRAND_PRESETS, DEFAULT_PRESETS } from "../onboarding/Constants";
 
@@ -476,9 +476,22 @@ function BrandKitPanel() {
   const [saving,         setSaving]         = useState(false);
   const [saved,          setSaved]          = useState(false);
   const [error,          setError]          = useState("");
+  const [usingDefault,   setUsingDefault]   = useState(isDefaultThemeOverrideActive);
   const brandPdfRef = useRef(null);
   const [brandPdfFile, setBrandPdfFile] = useState(null);
   const { user, companyIndustry } = useAuth();
+
+  const handleUseDefault = () => {
+    resetBrandTheme();
+    setUsingDefault(true);
+  };
+
+  const handleRestoreBrandTheme = () => {
+    if (brandKit) {
+      applyBrandTheme(brandKit);
+      setUsingDefault(false);
+    }
+  };
 
   // Fetch current brand kit on mount
   useEffect(() => {
@@ -745,6 +758,43 @@ function BrandKitPanel() {
           {error && (
             <div className="alert--error mb-4">{error}</div>
           )}
+
+          {/* Default theme toggle */}
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "12px 14px", borderRadius: "10px", marginBottom: "16px",
+            border: `1px solid ${usingDefault ? "var(--color-input-border)" : "var(--color-input-border)"}`,
+            backgroundColor: usingDefault ? "var(--color-page-bg)" : "transparent",
+          }}>
+            <div>
+              <p style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--color-input-text)" }}>
+                Use Platform Default Theme
+              </p>
+              <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", marginTop: "2px" }}>
+                {usingDefault
+                  ? "Currently active — brand kit is saved but not applied"
+                  : "Override your brand kit with the platform default"
+                }
+              </p>
+            </div>
+            {usingDefault ? (
+              <button
+                onClick={handleRestoreBrandTheme}
+                className="btn--ghost px-4 py-2 text-sm"
+                style={{ flexShrink: 0 }}
+              >
+                Restore Brand Kit
+              </button>
+            ) : (
+              <button
+                onClick={handleUseDefault}
+                className="btn--ghost px-4 py-2 text-sm"
+                style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: "6px" }}
+              >
+                <RotateCcw size={13} /> Use Default
+              </button>
+            )}
+          </div>
 
           {/* Save row */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "12px" }}>

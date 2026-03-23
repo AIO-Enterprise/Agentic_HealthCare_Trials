@@ -16,6 +16,12 @@
   --color-accent-subtle:   #ecfdf5;   /* light tinted backgrounds               */
   --color-accent-text:     #065f46;   /* text on accent-subtle backgrounds      */
 
+  /* RGB components of --color-accent — used for rgba() expressions.
+     theme.js overwrites these when a brand kit is applied.            */
+  --color-accent-r:        16;
+  --color-accent-g:        185;
+  --color-accent-b:        129;
+
   /* App shell */
   --color-sidebar-bg:      #030712;   /* gray-950 — sidebar background          */
   --color-sidebar-border:  #1f2937;   /* gray-800 — sidebar dividers            */
@@ -314,7 +320,7 @@ body {
   }
   .sidebar__nav-link--active {
     @apply sidebar__nav-link font-medium;
-    background-color: rgba(16,185,129,0.1);
+    background-color: rgba(var(--color-accent-r), var(--color-accent-g), var(--color-accent-b), 0.1);
     color: var(--color-sidebar-text-active);
   }
   .sidebar__signout {

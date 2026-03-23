@@ -4,10 +4,14 @@
  *
  * Provides authentication state, role-based routing,
  * and company context to the entire application.
+ *
+ * Brand theming is applied here because every session entry point
+ * (page refresh and explicit login) flows through this file.
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { authAPI } from "../services/api";
+import { authAPI, brandKitAPI } from "../services/api";
+import { applyBrandTheme, resetBrandTheme } from "../services/theme";
 
 const AuthContext = createContext(null);
 
@@ -16,16 +20,27 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Restore session from localStorage
+    // Always start from a clean default theme. This ensures the login page
+    // never inherits a previous session's brand colors. Theme is only applied
+    // after a confirmed valid session is found below.
+    resetBrandTheme();
+
     const token = localStorage.getItem("token");
     const stored = localStorage.getItem("user");
+
     if (token && stored) {
       try {
         setUser(JSON.parse(stored));
+        // Fire-and-forget — theme application is non-critical.
+        // If the brand kit fetch fails, the app still loads with default theme.
+        brandKitAPI.get()
+          .then((brandKit) => applyBrandTheme(brandKit))
+          .catch(() => {});
       } catch {
         localStorage.clear();
       }
     }
+
     setLoading(false);
   }, []);
 
@@ -41,11 +56,20 @@ export function AuthProvider({ children }) {
     localStorage.setItem("token", data.access_token);
     localStorage.setItem("user", JSON.stringify(userData));
     setUser(userData);
+
+    // Fetch and apply brand theme after login.
+    // Token is already in localStorage so brandKitAPI.get() is authenticated.
+    brandKitAPI.get()
+      .then((brandKit) => applyBrandTheme(brandKit))
+      .catch(() => {});
+
     return userData;
   }, []);
 
   // Used by OnboardingPage after registration + login to hydrate the context
   // without making a second network call.
+  // Theme is applied by OnboardingPage directly (it already has the brand data),
+  // so no brand fetch needed here.
   const hydrateUser = useCallback((userData) => {
     localStorage.setItem("token", userData.token);
     localStorage.setItem("user", JSON.stringify(userData));
@@ -54,6 +78,7 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(() => {
     localStorage.clear();
+    resetBrandTheme();
     setUser(null);
   }, []);
 

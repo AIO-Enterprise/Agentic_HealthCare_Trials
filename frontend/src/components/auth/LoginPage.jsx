@@ -13,9 +13,9 @@ import { useAuth } from "../../contexts/AuthContext";
 import { LogIn } from "lucide-react";
 
 const ROLE_ROUTES = {
-  admin: "/admin",
-  reviewer: "/reviewer",
-  ethics_reviewer: "/ethics",
+  study_coordinator: "/study-coordinator",
+  project_manager: "/project-manager",
+  ethics_manager: "/ethics",
   publisher: "/publisher",
 };
 
@@ -25,7 +25,7 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [company, setCompany] = useState("");
-  const [role, setRole] = useState("admin");
+  const [role, setRole] = useState("study_coordinator");
   const { login } = useAuth();
   const navigate = useNavigate();
 
@@ -132,10 +132,10 @@ export default function LoginPage() {
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    { value: "admin",           label: "Admin" },
-                    { value: "reviewer",        label: "Reviewer" },
-                    { value: "ethics_reviewer", label: "Ethics Reviewer" },
-                    { value: "publisher",       label: "Publisher" },
+                    { value: "study_coordinator", label: "Study Coordinator" },
+                    { value: "project_manager",   label: "Project Manager" },
+                    { value: "ethics_manager",    label: "Ethics Manager" },
+                    { value: "publisher",         label: "Publisher" },
                   ].map((r) => {
                     const active = role === r.value;
                     return (

@@ -898,7 +898,7 @@ export default function MyCompany() {
       )}
 
       {/* Brand kit — admin only */}
-      {role === "admin" && <BrandKitPanel />}
+      {role === "study_coordinator" && <BrandKitPanel />}
 
       {/* Page header */}
       <div className="page-header">
@@ -1033,7 +1033,7 @@ export default function MyCompany() {
       </div>
 
       {/* ── AI Skills (admin only) ─────────────────────────────────────────── */}
-      {role === "admin" && (
+      {role === "study_coordinator" && (
         <SectionCard
           title="AI Skills"
           subtitle="Retrain the Curator & Reviewer skills against your current documents. Run this after adding documents or when a system template update is released."

@@ -60,7 +60,7 @@ export default function EthicsDashboard() {
     <PageWithSidebar>
       <div className="page-header">
         <div>
-          <h1 className="page-header__title">Ethics Reviewer Dashboard</h1>
+          <h1 className="page-header__title">Ethics Manager Dashboard</h1>
           <p className="page-header__subtitle">Ensure marketing strategies meet ethical and compliance standards</p>
         </div>
       </div>

@@ -18,7 +18,7 @@ import {
   Send, Globe, Image, BarChart3, Play, Sparkles,
   CheckCircle, Rocket, ChevronDown, ChevronUp, Zap, X, ImageOff,
   Share2, UploadCloud, ExternalLink, Download, Eye, AlertCircle,
-  CheckCircle2, Loader2,
+  CheckCircle2, Loader2, Mic, PhoneCall, Radio, MessageSquare,
 } from "lucide-react";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -514,19 +514,58 @@ function CampaignDetailPanel({ ad, generating, onGenerateCreatives, onGenerateWe
         </div>
       )}
 
-      {(hasType(ad, "voicebot") || hasType(ad, "chatbot")) && (
+      {hasType(ad, "voicebot") && (
         <div className="mb-2">
-          <p className="pub-campaign-detail__section-label">Bot Configuration</p>
-          <InlineBotConfig ad={ad} />
+          <p className="pub-campaign-detail__section-label">Voice Agent Setup</p>
+          <VoicebotConfig ad={ad} />
         </div>
       )}
     </div>
   );
 }
 
-function InlineBotConfig({ ad }) {
-  const [form,   setForm]   = useState({ conversation_style: "professional", voice: "neutral", language: "en" });
-  const [saving, setSaving] = useState(false);
+// ElevenLabs voice options (popular voices from the voice library)
+const ELEVEN_VOICES = [
+  { id: "EXAVITQu4vr4xnSDxMaL", label: "Rachel — Calm, professional (F)" },
+  { id: "pNInz6obpgDQGcFmaJgB", label: "Adam — Deep, authoritative (M)" },
+  { id: "oWAxZDx7w5VEj9dCyTzz", label: "Grace — Warm, friendly (F)" },
+  { id: "TxGEqnHWrfWFTfGW9XjX", label: "Josh — Conversational (M)" },
+  { id: "AZnzlk1XvdvUeBnXmlld", label: "Domi — Strong, confident (F)" },
+  { id: "VR6AewLTigWG4xSOukaG", label: "Arnold — Crisp, clear (M)" },
+  { id: "MF3mGyEYCl7XYWbV9V6O", label: "Elli — Bright, energetic (F)" },
+  { id: "XB0fDUnXU5powFXDhCwa", label: "Charlotte — Sophisticated (F)" },
+];
+
+function VoicebotConfig({ ad }) {
+  const existing = ad.bot_config || {};
+
+  const [form, setForm] = useState({
+    bot_name:               existing.bot_name               || "Assistant",
+    voice_id:               existing.voice_id               || "EXAVITQu4vr4xnSDxMaL",
+    first_message:          existing.first_message          || "Hi! How can I help you today?",
+    conversation_style:     existing.conversation_style     || "professional",
+    language:               existing.language               || "en",
+    compliance_notes:       existing.compliance_notes       || "",
+    elevenlabs_agent_id:    existing.elevenlabs_agent_id    || "",   // manual paste from ElevenLabs dashboard
+  });
+
+  const [saving,        setSaving]        = useState(false);
+  const [provisioning,  setProvisioning]  = useState(false);
+  const [agentStatus,   setAgentStatus]   = useState(null);
+  const [statusError,   setStatusError]   = useState(null);
+  const [conversations, setConversations] = useState(null);
+  const [showConvs,     setShowConvs]     = useState(false);
+  const [transcript,    setTranscript]    = useState(null);
+  const [recommending,  setRecommending]  = useState(false);
+  const [recommendation, setRecommendation] = useState(null); // { voice_id, voice_name, reason, conversation_style, first_message }
+
+  // Load agent status once on mount
+  useEffect(() => {
+    if (!hasType(ad, "voicebot")) return;
+    adsAPI.getVoiceAgentStatus(ad.id)
+      .then(setAgentStatus)
+      .catch(() => setAgentStatus({ provisioned: false }));
+  }, [ad.id]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -535,30 +574,308 @@ function InlineBotConfig({ ad }) {
     finally { setSaving(false); }
   };
 
+  const handleRecommend = async () => {
+    setRecommending(true);
+    setRecommendation(null);
+    try {
+      const rec = await adsAPI.getVoiceRecommendation(ad.id);
+      setRecommendation(rec);
+    } catch (err) { alert(err.message); }
+    finally { setRecommending(false); }
+  };
+
+  const applyRecommendation = () => {
+    if (!recommendation) return;
+    setForm((p) => ({
+      ...p,
+      voice_id:           recommendation.voice_id,
+      conversation_style: recommendation.conversation_style,
+      first_message:      recommendation.first_message,
+    }));
+    setRecommendation(null);
+  };
+
+  const handleProvision = async () => {
+    setProvisioning(true);
+    setStatusError(null);
+    try {
+      await adsAPI.updateBotConfig(ad.id, form);      // save first
+      const result = await adsAPI.provisionVoiceAgent(ad.id);
+      setAgentStatus({ provisioned: true, agent_id: result.agent_id, name: form.bot_name });
+    } catch (err) {
+      setStatusError(err.message);
+    } finally {
+      setProvisioning(false);
+    }
+  };
+
+  const handleDeleteAgent = async () => {
+    if (!window.confirm("Delete the ElevenLabs agent for this campaign?")) return;
+    try {
+      await adsAPI.deleteVoiceAgent(ad.id);
+      setAgentStatus({ provisioned: false });
+    } catch (err) { alert(err.message); }
+  };
+
+  const handleLoadConversations = async () => {
+    if (showConvs) { setShowConvs(false); return; }
+    try {
+      const data = await adsAPI.listVoiceConversations(ad.id);
+      setConversations(data.conversations || []);
+      setShowConvs(true);
+    } catch (err) { alert(err.message); }
+  };
+
+  const handleViewTranscript = async (conversationId) => {
+    try {
+      const data = await adsAPI.getVoiceTranscript(conversationId);
+      setTranscript(data);
+    } catch (err) { alert(err.message); }
+  };
+
+  const isVoicebot = hasType(ad, "voicebot");
+
   return (
-    <div className="grid grid-cols-3 gap-3">
-      <select value={form.conversation_style} onChange={(e) => setForm((p) => ({ ...p, conversation_style: e.target.value }))} className="field-select">
-        <option value="professional">Professional</option>
-        <option value="friendly">Friendly</option>
-        <option value="casual">Casual</option>
-        <option value="formal">Formal</option>
-      </select>
-      <select value={form.voice} onChange={(e) => setForm((p) => ({ ...p, voice: e.target.value }))} className="field-select">
-        <option value="neutral">Neutral</option>
-        <option value="warm">Warm</option>
-        <option value="energetic">Energetic</option>
-        <option value="calm">Calm</option>
-      </select>
-      <select value={form.language} onChange={(e) => setForm((p) => ({ ...p, language: e.target.value }))} className="field-select">
-        <option value="en">English</option>
-        <option value="es">Spanish</option>
-        <option value="fr">French</option>
-        <option value="de">German</option>
-        <option value="hi">Hindi</option>
-      </select>
-      <button onClick={handleSave} disabled={saving} className="btn--primary col-span-3" style={{ justifyContent: "center" }}>
-        {saving ? "Saving…" : "Save Bot Config"}
-      </button>
+    <div style={{ border: "1px solid var(--color-border)", borderRadius: 12, padding: 16, background: "var(--color-surface)" }}>
+      {/* Header */}
+      <div className="flex items-center gap-2 mb-4">
+        <Mic size={15} style={{ color: "var(--color-accent)" }} />
+        <span style={{ fontWeight: 700, fontSize: "0.88rem" }}>ElevenLabs Voice Agent</span>
+        {agentStatus?.provisioned ? (
+          <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 5, fontSize: "0.75rem", color: "#10b981", fontWeight: 600 }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#10b981", display: "inline-block" }} />
+            Agent Live
+          </span>
+        ) : (
+          <span style={{ marginLeft: "auto", fontSize: "0.75rem", color: "var(--color-muted)" }}>Not provisioned</span>
+        )}
+      </div>
+
+      {/* AI Recommendation */}
+      <div className="mb-4">
+        <button
+          onClick={handleRecommend}
+          disabled={recommending || !ad.strategy_json}
+          className="btn--inline-action--accent"
+          style={{ width: "100%", justifyContent: "center", gap: 6, fontSize: "0.83rem", padding: "9px 0" }}
+          title={!ad.strategy_json ? "Generate a campaign strategy first to enable AI recommendations" : ""}
+        >
+          {recommending
+            ? <><div className="spinner" style={{ width: 11, height: 11 }} /> Analyzing audience…</>
+            : <><Sparkles size={13} /> Recommend Voice Profile from Target Audience</>}
+        </button>
+        {!ad.strategy_json && (
+          <p style={{ fontSize: "0.7rem", color: "var(--color-muted)", marginTop: 4, textAlign: "center" }}>
+            Generate a campaign strategy first to unlock AI voice recommendations.
+          </p>
+        )}
+
+        {recommendation && (
+          <div style={{ marginTop: 10, background: "rgba(16,185,129,0.06)", border: "1.5px solid #10b981", borderRadius: 12, padding: "14px 16px" }}>
+            <div className="flex items-start justify-between gap-3">
+              <div style={{ flex: 1 }}>
+                <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--color-text)", marginBottom: 4 }}>
+                  <Sparkles size={11} style={{ display: "inline", color: "#10b981", marginRight: 5 }} />
+                  Recommended: <span style={{ color: "#10b981" }}>{recommendation.voice_name}</span>
+                </p>
+                <p style={{ fontSize: "0.75rem", color: "var(--color-muted)", marginBottom: 6, lineHeight: 1.5 }}>
+                  {recommendation.reason}
+                </p>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: "0.7rem" }}>
+                  <span style={{ background: "var(--color-bg)", border: "1px solid var(--color-border)", borderRadius: 6, padding: "2px 8px" }}>
+                    Style: {recommendation.conversation_style}
+                  </span>
+                  <span style={{ background: "var(--color-bg)", border: "1px solid var(--color-border)", borderRadius: 6, padding: "2px 8px", fontStyle: "italic" }}>
+                    "{recommendation.first_message}"
+                  </span>
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
+                <button onClick={applyRecommendation} className="btn--inline-action--success" style={{ fontSize: "0.75rem", whiteSpace: "nowrap" }}>
+                  <CheckCircle2 size={11} /> Apply
+                </button>
+                <button onClick={() => setRecommendation(null)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.7rem", color: "var(--color-muted)" }}>
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Config form */}
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        <div>
+          <label style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--color-muted)", display: "block", marginBottom: 4 }}>Bot Name</label>
+          <input
+            value={form.bot_name}
+            onChange={(e) => setForm((p) => ({ ...p, bot_name: e.target.value }))}
+            className="field-input"
+            placeholder="e.g. Alex"
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--color-muted)", display: "block", marginBottom: 4 }}>ElevenLabs Voice</label>
+          <select value={form.voice_id} onChange={(e) => setForm((p) => ({ ...p, voice_id: e.target.value }))} className="field-select">
+            {ELEVEN_VOICES.map((v) => (
+              <option key={v.id} value={v.id}>{v.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="col-span-2">
+          <label style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--color-muted)", display: "block", marginBottom: 4 }}>Opening Message</label>
+          <input
+            value={form.first_message}
+            onChange={(e) => setForm((p) => ({ ...p, first_message: e.target.value }))}
+            className="field-input"
+            placeholder="Hi! How can I help you today?"
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--color-muted)", display: "block", marginBottom: 4 }}>Conversation Style</label>
+          <select value={form.conversation_style} onChange={(e) => setForm((p) => ({ ...p, conversation_style: e.target.value }))} className="field-select">
+            <option value="professional">Professional</option>
+            <option value="friendly">Friendly</option>
+            <option value="casual">Casual</option>
+            <option value="formal">Formal</option>
+            <option value="empathetic">Empathetic</option>
+            <option value="energetic">Energetic</option>
+          </select>
+        </div>
+        <div>
+          <label style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--color-muted)", display: "block", marginBottom: 4 }}>Language</label>
+          <select value={form.language} onChange={(e) => setForm((p) => ({ ...p, language: e.target.value }))} className="field-select">
+            <option value="en">English</option>
+            <option value="en-GB">English (UK)</option>
+            <option value="es">Spanish</option>
+            <option value="fr">French</option>
+            <option value="de">German</option>
+            <option value="hi">Hindi</option>
+            <option value="pt">Portuguese</option>
+            <option value="ja">Japanese</option>
+          </select>
+        </div>
+        <div className="col-span-2">
+          <label style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--color-muted)", display: "block", marginBottom: 4 }}>Compliance Notes <span style={{ fontWeight: 400 }}>(optional)</span></label>
+          <input
+            value={form.compliance_notes}
+            onChange={(e) => setForm((p) => ({ ...p, compliance_notes: e.target.value }))}
+            className="field-input"
+            placeholder="e.g. Do not mention competitor names. Always disclose this is an AI."
+          />
+        </div>
+        <div className="col-span-2" style={{ borderTop: "1px solid var(--color-border)", paddingTop: 12, marginTop: 4 }}>
+          <label style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--color-muted)", display: "block", marginBottom: 4 }}>
+            ElevenLabs Agent ID <span style={{ fontWeight: 400 }}>— paste from dashboard if you created the agent manually</span>
+          </label>
+          <input
+            value={form.elevenlabs_agent_id}
+            onChange={(e) => setForm((p) => ({ ...p, elevenlabs_agent_id: e.target.value }))}
+            className="field-input"
+            placeholder="e.g. abc123def456..."
+            style={{ fontFamily: "monospace", fontSize: "0.82rem" }}
+          />
+          <p style={{ fontSize: "0.7rem", color: "var(--color-muted)", marginTop: 4 }}>
+            ElevenLabs dashboard → Agents → select your agent → copy the Agent ID from the URL or settings.
+            Saving this skips automatic provisioning and uses the agent directly.
+          </p>
+        </div>
+      </div>
+
+      {/* Action buttons */}
+      <div className="flex gap-2 flex-wrap">
+        <button onClick={handleSave} disabled={saving} className="btn--inline-action--ghost">
+          {saving ? <><div className="spinner" style={{ width: 10, height: 10 }} /> Saving…</> : "Save Config"}
+        </button>
+
+        {isVoicebot && (
+          <button onClick={handleProvision} disabled={provisioning} className="btn--primary" style={{ fontSize: "0.8rem", padding: "7px 16px" }}>
+            {provisioning
+              ? <><div className="spinner" style={{ width: 10, height: 10 }} /> Provisioning…</>
+              : agentStatus?.provisioned
+                ? <><Zap size={12} /> Re-provision Agent</>
+                : <><Radio size={12} /> Provision Agent</>
+            }
+          </button>
+        )}
+
+        {agentStatus?.provisioned && (
+          <>
+            <button onClick={handleLoadConversations} className="btn--inline-action--accent" style={{ fontSize: "0.8rem" }}>
+              <PhoneCall size={11} /> {showConvs ? "Hide Calls" : "View Calls"}
+            </button>
+            <button onClick={handleDeleteAgent} className="btn--inline-action--ghost" style={{ fontSize: "0.8rem", color: "#ef4444" }}>
+              Delete Agent
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Error */}
+      {statusError && (
+        <p style={{ marginTop: 10, fontSize: "0.78rem", color: "#ef4444" }}>
+          <AlertCircle size={11} style={{ display: "inline", marginRight: 4 }} />{statusError}
+        </p>
+      )}
+
+      {/* Agent ID info */}
+      {agentStatus?.provisioned && agentStatus.agent_id && (
+        <p style={{ marginTop: 8, fontSize: "0.72rem", color: "var(--color-muted)" }}>
+          Agent ID: <code style={{ fontSize: "0.7rem" }}>{agentStatus.agent_id}</code>
+        </p>
+      )}
+
+      {/* Conversations list */}
+      {showConvs && conversations !== null && (
+        <div style={{ marginTop: 14, borderTop: "1px solid var(--color-border)", paddingTop: 12 }}>
+          <p style={{ fontSize: "0.78rem", fontWeight: 700, marginBottom: 8 }}>
+            <PhoneCall size={11} style={{ display: "inline", marginRight: 5 }} />
+            Call History ({conversations.length})
+          </p>
+          {conversations.length === 0 ? (
+            <p style={{ fontSize: "0.75rem", color: "var(--color-muted)" }}>No calls yet — share the landing page to get started.</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {conversations.map((c) => (
+                <div key={c.conversation_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--color-bg)", borderRadius: 8, padding: "8px 12px", fontSize: "0.78rem" }}>
+                  <div>
+                    <span style={{ fontWeight: 600 }}>{c.conversation_id?.slice(0, 12)}…</span>
+                    <span style={{ color: "var(--color-muted)", marginLeft: 8 }}>
+                      {c.status} · {c.metadata?.duration != null ? `${Math.round(c.metadata.duration)}s` : "—"}
+                    </span>
+                  </div>
+                  <button onClick={() => handleViewTranscript(c.conversation_id)} className="btn--inline-action--ghost" style={{ fontSize: "0.72rem" }}>
+                    <MessageSquare size={10} /> Transcript
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Transcript modal */}
+      {transcript && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setTranscript(null)}>
+          <div style={{ background: "var(--color-surface)", borderRadius: 16, padding: 24, maxWidth: 560, width: "90%", maxHeight: "70vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <p style={{ fontWeight: 700, fontSize: "0.9rem" }}>Call Transcript</p>
+              <button onClick={() => setTranscript(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-muted)" }}><X size={16} /></button>
+            </div>
+            {(transcript.transcript || []).map((turn, i) => (
+              <div key={i} style={{ marginBottom: 10, display: "flex", flexDirection: "column", alignItems: turn.role === "agent" ? "flex-start" : "flex-end" }}>
+                <span style={{ fontSize: "0.65rem", color: "var(--color-muted)", marginBottom: 2, textTransform: "capitalize" }}>{turn.role}</span>
+                <div style={{ background: turn.role === "agent" ? "var(--color-bg)" : "var(--color-accent)", color: turn.role === "agent" ? "var(--color-text)" : "#fff", borderRadius: 10, padding: "8px 12px", fontSize: "0.83rem", maxWidth: "80%" }}>
+                  {turn.message}
+                </div>
+              </div>
+            ))}
+            {(!transcript.transcript || transcript.transcript.length === 0) && (
+              <p style={{ color: "var(--color-muted)", fontSize: "0.82rem" }}>No transcript available for this call.</p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

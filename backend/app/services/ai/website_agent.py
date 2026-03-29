@@ -72,6 +72,9 @@ INTERACTION (voicebot — place AFTER survey with id="interaction-reveal"):
   .interaction-card  .interaction-card.featured
   .interaction-card__icon  .interaction-card__title  .interaction-card__desc
   .interaction-card__btn  .interaction-card__meta
+  IMPORTANT: The "Start Voice Call" button MUST have id="voice-call-btn".
+  The "Request a Callback" button MUST have id="callback-btn".
+  These IDs are required for the voice JS to wire up correctly.
 
 CHATBOT: The chat widget floats in the bottom-right corner — the system injects it automatically.
   Do NOT add any chat HTML to the page body.
@@ -118,7 +121,7 @@ class WebsiteAgentService:
         bot_welcome = bot_config.get("welcome_message", f"Hi! I'm {bot_name}. How can I help you today?") if isinstance(bot_config, dict) else f"Hi! I'm {bot_name}."
         css         = self._build_css(brand_kit)
         body        = await self._generate_body(ad, brand_kit, company)
-        html        = self._wrap_html(ad.title, css, body, ad_types, bot_name, bot_welcome)
+        html        = self._wrap_html(ad.title, css, body, ad_types, bot_name, bot_welcome, ad_id=ad.id)
 
         index_path = os.path.join(output_dir, "index.html")
         with open(index_path, "w", encoding="utf-8") as f:
@@ -317,6 +320,7 @@ class WebsiteAgentService:
         ad_types: List[str],
         bot_name: str = "Assistant",
         bot_welcome: str = "Hi! How can I help you today?",
+        ad_id: str = "",
     ) -> str:
         has_chat     = "chatbot"  in ad_types
         has_voice    = "voicebot" in ad_types
@@ -548,6 +552,102 @@ class WebsiteAgentService:
                 1,
             )
 
+        # ElevenLabs voice call JS (Python-injected, only when voicebot is active)
+        # Uses dynamic ESM import via esm.sh — no UMD globals needed, works in all modern browsers.
+        voice_js = ""
+        if has_voice and ad_id:
+            voice_js = f"""
+<script type="module">
+/* ── ElevenLabs Voice Call ─────────────────────────────────────────────── */
+(async function () {{
+  var voiceBtn    = document.getElementById('voice-call-btn');
+  var callbackBtn = document.getElementById('callback-btn');
+  if (!voiceBtn) return;
+
+  var AD_ID    = '{ad_id}';
+  var API_BASE = window.location.origin;
+  var conversation = null;
+
+  function setBtn(text, disabled) {{
+    voiceBtn.textContent   = text;
+    voiceBtn.disabled      = disabled;
+    voiceBtn.style.opacity = disabled ? '0.6' : '1';
+  }}
+
+  async function startCall() {{
+    setBtn('Connecting\u2026', true);
+    try {{
+      /* 1. Fetch signed WebSocket URL from our backend (no auth needed) */
+      var resp = await fetch(API_BASE + '/api/advertisements/' + AD_ID + '/voice-session/token');
+      if (!resp.ok) throw new Error('Session token failed — is the voice agent provisioned? (HTTP ' + resp.status + ')');
+      var data = await resp.json();
+      if (!data.signed_url) throw new Error('No signed URL returned from server');
+
+      /* 2. Load ElevenLabs SDK via ESM (esm.sh handles all dependencies automatically) */
+      var {{ Conversation }} = await import('https://esm.sh/@11labs/client');
+
+      /* 3. Request microphone permission explicitly so errors are clear */
+      await navigator.mediaDevices.getUserMedia({{ audio: true }});
+
+      /* 4. Start WebSocket voice session — audio never touches our servers */
+      conversation = await Conversation.startSession({{
+        signedUrl: data.signed_url,
+        onConnect: function () {{
+          setBtn('\u23F9 End Call', false);
+        }},
+        onDisconnect: function () {{
+          setBtn('Start Voice Call \u2192', false);
+          conversation = null;
+        }},
+        onError: function (err) {{
+          console.error('[ElevenLabs]', err);
+          setBtn('Start Voice Call \u2192', false);
+          conversation = null;
+        }},
+      }});
+    }} catch (e) {{
+      setBtn('Start Voice Call \u2192', false);
+      if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {{
+        alert('Microphone access denied.\nPlease allow microphone access in your browser and try again.');
+      }} else {{
+        alert('Could not start call:\n' + e.message);
+      }}
+    }}
+  }}
+
+  voiceBtn.addEventListener('click', function () {{
+    if (conversation) {{
+      conversation.endSession();
+      return;
+    }}
+    startCall();
+  }});
+
+  /* ── Callback request form (inline modal) ─────────────────────────── */
+  if (callbackBtn) {{
+    var modal = document.createElement('div');
+    modal.innerHTML = '<div id="cb-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10000;align-items:center;justify-content:center"><div style="background:#fff;border-radius:18px;padding:36px 32px;max-width:420px;width:90%;box-shadow:0 16px 48px rgba(0,0,0,0.22);text-align:center"><h3 style="font-size:1.2rem;font-weight:800;margin-bottom:8px">Request a Callback</h3><p style="color:#64748b;font-size:0.9rem;margin-bottom:20px">Enter your phone number and we\'ll call you back shortly.</p><input id="cb-phone" type="tel" placeholder="+1 (555) 000-0000" style="width:100%;border:1.5px solid #e2e8f0;border-radius:10px;padding:12px 16px;font-size:0.95rem;margin-bottom:14px;font-family:inherit;outline:none" /><button id="cb-submit" style="width:100%;background:var(--accent,#10b981);color:#fff;border:none;border-radius:50px;padding:13px;font-size:0.95rem;font-weight:700;cursor:pointer;font-family:inherit">Request Callback</button><p id="cb-thanks" style="display:none;margin-top:14px;color:#10b981;font-weight:600">&#10003; Got it! We\'ll call you back shortly.</p><button id="cb-close" style="margin-top:16px;background:transparent;border:none;color:#94a3b8;cursor:pointer;font-size:0.85rem;font-family:inherit">Cancel</button></div></div>';
+    document.body.appendChild(modal);
+
+    var cbModal  = document.getElementById('cb-modal');
+    var cbPhone  = document.getElementById('cb-phone');
+    var cbSubmit = document.getElementById('cb-submit');
+    var cbThanks = document.getElementById('cb-thanks');
+    var cbClose  = document.getElementById('cb-close');
+
+    callbackBtn.addEventListener('click', function () {{ cbModal.style.display = 'flex'; cbPhone.focus(); }});
+    if (cbClose)  cbClose.addEventListener('click',  function () {{ cbModal.style.display = 'none'; }});
+    if (cbSubmit) cbSubmit.addEventListener('click', function () {{
+      var phone = (cbPhone && cbPhone.value || '').trim();
+      if (!phone) {{ cbPhone.style.borderColor = '#ef4444'; return; }}
+      cbPhone.style.borderColor = '#e2e8f0';
+      cbSubmit.style.display = 'none';
+      if (cbThanks) cbThanks.style.display = 'block';
+    }});
+  }}
+}})();
+</script>"""
+
         return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -562,6 +662,7 @@ class WebsiteAgentService:
 {chat_float_html}
 {survey_js}
 {chat_js}
+{voice_js}
 </body>
 </html>"""
 
@@ -731,14 +832,14 @@ Start output with <nav>. End with </footer>. No inline styles. No custom classes
       <div class="interaction-card__icon">🎤</div>
       <p class="interaction-card__title">Talk to {bot_name} Now</p>
       <p class="interaction-card__desc">{bot_name} will speak with you right now through your browser — no phone needed.</p>
-      <button class="interaction-card__btn">Start Voice Call →</button>
+      <button class="interaction-card__btn" id="voice-call-btn">Start Voice Call →</button>
       <p class="interaction-card__meta">Uses your microphone · Instant · Free</p>
     </div>
     <div class="interaction-card">
       <div class="interaction-card__icon">📞</div>
       <p class="interaction-card__title">Request a Callback</p>
       <p class="interaction-card__desc">Prefer your phone? Enter your number and {bot_name} will call you within 2 minutes.</p>
-      <button class="interaction-card__btn">Request a Call →</button>
+      <button class="interaction-card__btn" id="callback-btn">Request a Call →</button>
       <p class="interaction-card__meta">Phone call · Free</p>
     </div>
   </div>

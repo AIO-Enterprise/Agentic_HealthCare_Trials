@@ -4,7 +4,7 @@ Owner: Backend Dev 2
 Dependencies: M1, M2
 
 CRUD for company documents — USP, Compliances, Policies, Marketing Goals, etc.
-Used by Admin (My Company) and Ethics Reviewer (Document Updation).
+Used by Study Coordinator (My Company) and Ethics Manager (Document Updation).
 """
 
 import os
@@ -96,7 +96,7 @@ async def list_documents(
 @router.post("/", response_model=DocumentOut)
 async def create_document(
     body: DocumentCreate,
-    user: User = Depends(require_roles([UserRole.ADMIN, UserRole.ETHICS_REVIEWER])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.ETHICS_MANAGER])),
     db: AsyncSession = Depends(get_db),
 ):
     doc = CompanyDocument(
@@ -116,7 +116,7 @@ async def upload_document(
     title: str = Form(...),
     file: UploadFile = File(...),
     background_tasks: BackgroundTasks = BackgroundTasks(),
-    user: User = Depends(require_roles([UserRole.ADMIN, UserRole.ETHICS_REVIEWER])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.ETHICS_MANAGER])),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -201,7 +201,7 @@ async def serve_document_file(
 async def update_document(
     doc_id: str,
     body: DocumentUpdate,
-    user: User = Depends(require_roles([UserRole.ADMIN, UserRole.ETHICS_REVIEWER])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.ETHICS_MANAGER])),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -223,7 +223,7 @@ async def update_document(
 @router.delete("/{doc_id}")
 async def delete_document(
     doc_id: str,
-    user: User = Depends(require_roles([UserRole.ADMIN])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(

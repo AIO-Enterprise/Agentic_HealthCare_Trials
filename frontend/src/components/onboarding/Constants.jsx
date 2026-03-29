@@ -3,7 +3,7 @@ import { Building2, UserPlus, FileUp, Palette, Cpu } from "lucide-react";
 // ── Wizard step definitions ────────────────────────────────────────────────
 export const STEPS = [
   { label: "Company Info",     icon: Building2 },
-  { label: "Admin Account",    icon: UserPlus },
+  { label: "Study Coordinator Account", icon: UserPlus },
   { label: "Upload Documents", icon: FileUp },
   { label: "Brand Kit",        icon: Palette },
   { label: "AI Training",      icon: Cpu },

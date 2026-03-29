@@ -7,6 +7,7 @@
 import React from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
+import { GenerationProvider } from "./contexts/GenerationContext";
 import { ProtectedRoute } from "./components/shared/Layout";
 
 // Auth
@@ -33,7 +34,7 @@ import PublisherDashboard from "./components/publisher/PublisherDashboard";
 // Analytics (shared)
 import AnalyticsPage from "./components/analytics/AnalyticsPage";
 
-const ALL_ROLES = ["admin", "reviewer", "ethics_reviewer", "publisher"];
+const ALL_ROLES = ["study_coordinator", "project_manager", "ethics_manager", "publisher"];
 
 function AppRoutes() {
   const { isAuthenticated, role } = useAuth();
@@ -44,26 +45,26 @@ function AppRoutes() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/onboarding" element={<OnboardingPage />} />
 
-      {/* Admin routes */}
-      <Route path="/admin" element={<ProtectedRoute allowedRoles={["admin"]}><AdminDashboard /></ProtectedRoute>} />
-      <Route path="/admin/create" element={<ProtectedRoute allowedRoles={["admin"]}><CampaignCreator /></ProtectedRoute>} />
-      <Route path="/admin/users" element={<ProtectedRoute allowedRoles={["admin"]}><UserManagement /></ProtectedRoute>} />
-      <Route path="/admin/company" element={<ProtectedRoute allowedRoles={["admin"]}><MyCompany /></ProtectedRoute>} />
-      <Route path="/admin/analytics" element={<ProtectedRoute allowedRoles={["admin"]}><AnalyticsPage /></ProtectedRoute>} />
+      {/* Study Coordinator routes */}
+      <Route path="/study-coordinator" element={<ProtectedRoute allowedRoles={["study_coordinator"]}><AdminDashboard /></ProtectedRoute>} />
+      <Route path="/study-coordinator/create" element={<ProtectedRoute allowedRoles={["study_coordinator"]}><CampaignCreator /></ProtectedRoute>} />
+      <Route path="/study-coordinator/users" element={<ProtectedRoute allowedRoles={["study_coordinator"]}><UserManagement /></ProtectedRoute>} />
+      <Route path="/study-coordinator/company" element={<ProtectedRoute allowedRoles={["study_coordinator"]}><MyCompany /></ProtectedRoute>} />
+      <Route path="/study-coordinator/analytics" element={<ProtectedRoute allowedRoles={["study_coordinator"]}><AnalyticsPage /></ProtectedRoute>} />
 
-      {/* Campaign detail — accessible by all roles since reviewer/publisher/ethics also need it */}
-      <Route path="/admin/campaign/:id" element={<ProtectedRoute allowedRoles={ALL_ROLES}><CampaignDetailPage /></ProtectedRoute>} />
+      {/* Campaign detail — accessible by all roles since project_manager/publisher/ethics also need it */}
+      <Route path="/study-coordinator/campaign/:id" element={<ProtectedRoute allowedRoles={ALL_ROLES}><CampaignDetailPage /></ProtectedRoute>} />
 
-      {/* Reviewer routes */}
-      <Route path="/reviewer" element={<ProtectedRoute allowedRoles={["reviewer"]}><ReviewerDashboard /></ProtectedRoute>} />
-      <Route path="/reviewer/queue" element={<ProtectedRoute allowedRoles={["reviewer"]}><ReviewerDashboard /></ProtectedRoute>} />
-      <Route path="/reviewer/analytics" element={<ProtectedRoute allowedRoles={["reviewer"]}><AnalyticsPage /></ProtectedRoute>} />
-      <Route path="/reviewer/campaign/:id" element={<ProtectedRoute allowedRoles={["reviewer"]}><ReviewerCampaignDetail /></ProtectedRoute>} />
+      {/* Project Manager routes */}
+      <Route path="/project-manager" element={<ProtectedRoute allowedRoles={["project_manager"]}><ReviewerDashboard /></ProtectedRoute>} />
+      <Route path="/project-manager/queue" element={<ProtectedRoute allowedRoles={["project_manager"]}><ReviewerDashboard /></ProtectedRoute>} />
+      <Route path="/project-manager/analytics" element={<ProtectedRoute allowedRoles={["project_manager"]}><AnalyticsPage /></ProtectedRoute>} />
+      <Route path="/project-manager/campaign/:id" element={<ProtectedRoute allowedRoles={["project_manager"]}><ReviewerCampaignDetail /></ProtectedRoute>} />
 
       {/* Ethics routes */}
-      <Route path="/ethics" element={<ProtectedRoute allowedRoles={["ethics_reviewer"]}><EthicsDashboard /></ProtectedRoute>} />
-      <Route path="/ethics/review" element={<ProtectedRoute allowedRoles={["ethics_reviewer"]}><EthicsDashboard /></ProtectedRoute>} />
-      <Route path="/ethics/documents" element={<ProtectedRoute allowedRoles={["ethics_reviewer"]}><EthicsDashboard /></ProtectedRoute>} />
+      <Route path="/ethics" element={<ProtectedRoute allowedRoles={["ethics_manager"]}><EthicsDashboard /></ProtectedRoute>} />
+      <Route path="/ethics/review" element={<ProtectedRoute allowedRoles={["ethics_manager"]}><EthicsDashboard /></ProtectedRoute>} />
+      <Route path="/ethics/documents" element={<ProtectedRoute allowedRoles={["ethics_manager"]}><EthicsDashboard /></ProtectedRoute>} />
 
       {/* Publisher routes */}
       <Route path="/publisher" element={<ProtectedRoute allowedRoles={["publisher"]}><PublisherDashboard /></ProtectedRoute>} />
@@ -82,7 +83,7 @@ function AppRoutes() {
       } />
 
       {/* Default redirect */}
-      <Route path="*" element={<Navigate to={isAuthenticated ? `/${role === "ethics_reviewer" ? "ethics" : role}` : "/login"} />} />
+      <Route path="*" element={<Navigate to={isAuthenticated ? `/${role === "ethics_manager" ? "ethics" : role === "study_coordinator" ? "study-coordinator" : role === "project_manager" ? "project-manager" : role}` : "/login"} />} />
     </Routes>
   );
 }
@@ -91,7 +92,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <GenerationProvider>
+          <AppRoutes />
+        </GenerationProvider>
       </AuthProvider>
     </BrowserRouter>
   );

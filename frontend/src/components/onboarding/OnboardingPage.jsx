@@ -133,7 +133,7 @@ export default function OnboardingPage() {
         form.admin_email,
         form.admin_password,
         form.company_name,
-        "admin",
+        "study_coordinator",
       );
 
       // 3. Persist token to localStorage immediately so that uploadLogo and
@@ -312,7 +312,7 @@ export default function OnboardingPage() {
                   trainingDone={trainingDone}
                   onTrain={handleTrain}
                   onBack={() => goToStep(3)}
-                  onFinish={() => navigate("/admin")}
+                  onFinish={() => navigate("/study-coordinator")}
                 />
               )}
             </ErrorBoundary>

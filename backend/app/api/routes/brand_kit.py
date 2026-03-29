@@ -30,7 +30,7 @@ ALLOWED_LOGO_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/svg+xml"}
 @router.post("/onboarding/logo", response_model=LogoUploadResponse)
 async def upload_logo(
     file: UploadFile = File(...),
-    user: User = Depends(require_roles([UserRole.ADMIN])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
 ):
     """
     Upload company logo after registration.
@@ -61,7 +61,7 @@ async def upload_logo(
 @router.post("/brand-kit/", response_model=BrandKitOut)
 async def create_brand_kit(
     body: BrandKitCreate,
-    user: User = Depends(require_roles([UserRole.ADMIN])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -112,7 +112,7 @@ async def get_brand_kit(
 @router.patch("/brand-kit/", response_model=BrandKitOut)
 async def update_brand_kit(
     body: BrandKitUpdate,
-    user: User = Depends(require_roles([UserRole.ADMIN])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
     db: AsyncSession = Depends(get_db),
 ):
     """Update brand kit — callable from onboarding or settings page."""

@@ -42,7 +42,7 @@ async def get_analytics(
 @router.post("/{ad_id}/optimize", response_model=OptimizerSuggestion)
 async def trigger_optimization(
     ad_id: str,
-    user: User = Depends(require_roles([UserRole.ADMIN, UserRole.PUBLISHER, UserRole.REVIEWER])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER, UserRole.PROJECT_MANAGER])),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -96,7 +96,7 @@ async def trigger_optimization(
 async def submit_optimizer_decision(
     ad_id: str,
     body: OptimizerDecision,
-    user: User = Depends(require_roles([UserRole.ADMIN, UserRole.PUBLISHER, UserRole.REVIEWER])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER, UserRole.PROJECT_MANAGER])),
     db: AsyncSession = Depends(get_db),
 ):
     """

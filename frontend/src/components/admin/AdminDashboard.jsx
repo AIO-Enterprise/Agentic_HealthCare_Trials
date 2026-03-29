@@ -180,7 +180,7 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     const role = JSON.parse(localStorage.getItem("user") || "{}").role;
-    const requests = [adsAPI.list(), role === "admin" ? usersAPI.list() : Promise.resolve([])];
+    const requests = [adsAPI.list(), role === "study_coordinator" ? usersAPI.list() : Promise.resolve([])];
     Promise.all(requests)
       .then(([a, u]) => { setAds(a); setUsers(u); })
       .catch(console.error)
@@ -191,17 +191,17 @@ export default function AdminDashboard() {
   const published = ads.filter((a) => a.status === "published");
   const inReview  = ads.filter((a) => ["under_review", "ethics_review"].includes(a.status));
 
-  const onOpen = (ad) => navigate(`/admin/campaign/${ad.id}`);
+  const onOpen = (ad) => navigate(`/study-coordinator/campaign/${ad.id}`);
 
   return (
     <PageWithSidebar>
       {/* Page header */}
       <div className="page-header">
         <div>
-          <h1 className="page-header__title">Admin Dashboard</h1>
+          <h1 className="page-header__title">Study Coordinator Dashboard</h1>
           <p className="page-header__subtitle">Manage campaigns, users, and company documents</p>
         </div>
-        <Link to="/admin/create" className="btn--accent">
+        <Link to="/study-coordinator/create" className="btn--accent">
           <Plus size={16} /> New Campaign
         </Link>
       </div>
@@ -219,7 +219,7 @@ export default function AdminDashboard() {
         title="Active Campaigns"
         subtitle={loading ? "Loading…" : `${active.length} campaign${active.length !== 1 ? "s" : ""} in progress`}
         actions={
-          <Link to="/admin/create" className="text-sm font-medium" style={{ color: "var(--color-accent)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <Link to="/study-coordinator/create" className="text-sm font-medium" style={{ color: "var(--color-accent)", display: "inline-flex", alignItems: "center", gap: 4 }}>
             <Plus size={13} /> New
           </Link>
         }
@@ -249,7 +249,7 @@ export default function AdminDashboard() {
             title="Published"
             subtitle={`${published.length} live`}
             actions={
-              <Link to="/admin/analytics" className="text-sm font-medium" style={{ color: "var(--color-accent)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <Link to="/study-coordinator/analytics" className="text-sm font-medium" style={{ color: "var(--color-accent)", display: "inline-flex", alignItems: "center", gap: 4 }}>
                 Analytics <ArrowRight size={13} />
               </Link>
             }

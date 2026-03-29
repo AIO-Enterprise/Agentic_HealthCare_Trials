@@ -68,13 +68,13 @@ async def onboard_company(body: OnboardingRequest, db: AsyncSession = Depends(ge
     db.add(company)
     await db.flush()
 
-    # Create admin user
+    # Create study coordinator user
     admin = User(
         company_id=company.id,
         email=body.admin_email,
         hashed_pw=hash_password(body.admin_password),
         full_name=body.admin_name,
-        role=UserRole.ADMIN,
+        role=UserRole.STUDY_COORDINATOR,
     )
     db.add(admin)
 
@@ -97,7 +97,7 @@ async def upload_document(
     content: str = Form(None),
     file: UploadFile = File(None),
     background_tasks: BackgroundTasks = BackgroundTasks(),
-    user: User = Depends(require_roles([UserRole.ADMIN])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -133,7 +133,7 @@ async def upload_document(
 
 @router.post("/train", response_model=TrainingStatus)
 async def trigger_training(
-    user: User = Depends(require_roles([UserRole.ADMIN])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
     db: AsyncSession = Depends(get_db),
 ):
     """

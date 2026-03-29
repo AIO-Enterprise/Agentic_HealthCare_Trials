@@ -76,7 +76,7 @@ async def get_current_user(
 def require_roles(allowed_roles: List[UserRole]):
     """
     FastAPI dependency factory.
-    Usage: Depends(require_roles([UserRole.ADMIN, UserRole.PUBLISHER]))
+    Usage: Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER]))
     """
     async def _check(user: User = Depends(get_current_user)):
         if user.role not in allowed_roles:

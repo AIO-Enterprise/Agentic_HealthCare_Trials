@@ -83,7 +83,7 @@ function DashboardPage({ loading, ads, reviewable, reviewed, onReview }) {
     <PageWithSidebar>
       <div className="page-header">
         <div>
-          <h1 className="page-header__title">Reviewer Dashboard</h1>
+          <h1 className="page-header__title">Project Manager Dashboard</h1>
           <p className="page-header__subtitle">Review and approve marketing strategies</p>
         </div>
       </div>
@@ -251,7 +251,7 @@ export default function ReviewerDashboard() {
       ads={ads}
       reviewable={reviewable}
       reviewed={reviewed}
-      onReview={(ad) => navigate(`/reviewer/campaign/${ad.id}`)}
+      onReview={(ad) => navigate(`/project-manager/campaign/${ad.id}`)}
     />
   );
 }

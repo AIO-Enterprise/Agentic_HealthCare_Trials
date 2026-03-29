@@ -34,6 +34,7 @@ from app.schemas.schemas import (
 from app.core.security import require_roles, get_current_user
 from app.services.ai.curator import CuratorService
 from app.services.ai.reviewer import ReviewerService
+from app.services.ai.voicebot_agent import VoicebotAgentService
 from app.services.storage import file_storage
 from app.services.storage.extractor import extract_text, url_to_disk_path, BACKEND_ROOT
 
@@ -53,7 +54,7 @@ ALLOWED_PROTOCOL_TYPES = {
 @router.post("/", response_model=AdvertisementOut)
 async def create_advertisement(
     body: AdvertisementCreate,
-    user: User = Depends(require_roles([UserRole.ADMIN, UserRole.PUBLISHER])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER])),
     db: AsyncSession = Depends(get_db),
 ):
     ad = Advertisement(
@@ -106,7 +107,7 @@ async def get_advertisement(
 async def update_advertisement(
     ad_id: str,
     body: AdvertisementUpdate,
-    user: User = Depends(require_roles([UserRole.ADMIN, UserRole.PUBLISHER, UserRole.REVIEWER])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER, UserRole.PROJECT_MANAGER])),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -129,7 +130,7 @@ async def update_advertisement(
 @router.post("/{ad_id}/generate-questionnaire", response_model=AdvertisementOut)
 async def generate_questionnaire(
     ad_id: str,
-    user: User = Depends(require_roles([UserRole.ADMIN, UserRole.PUBLISHER, UserRole.REVIEWER])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER, UserRole.PROJECT_MANAGER])),
     db: AsyncSession = Depends(get_db),
 ):
     """Use Claude to auto-generate an MCQ eligibility questionnaire from campaign context."""
@@ -171,7 +172,7 @@ async def generate_questionnaire(
 async def update_questionnaire(
     ad_id: str,
     body: QuestionnaireUpdate,
-    user: User = Depends(require_roles([UserRole.ADMIN, UserRole.PUBLISHER, UserRole.REVIEWER])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER, UserRole.PROJECT_MANAGER])),
     db: AsyncSession = Depends(get_db),
 ):
     """Save or replace the questionnaire for a campaign."""
@@ -196,7 +197,7 @@ async def upload_protocol_document(
     doc_type: str = Form(...),
     title: str = Form(...),
     file: UploadFile = File(...),
-    user: User = Depends(require_roles([UserRole.ADMIN, UserRole.PUBLISHER])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER])),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -266,7 +267,7 @@ async def list_protocol_documents(
 @router.post("/{ad_id}/generate-strategy", response_model=AdvertisementOut)
 async def generate_strategy(
     ad_id: str,
-    user: User = Depends(require_roles([UserRole.ADMIN, UserRole.PUBLISHER])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER])),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -323,7 +324,7 @@ async def generate_strategy(
 @router.post("/{ad_id}/submit-for-review", response_model=AdvertisementOut)
 async def submit_for_review(
     ad_id: str,
-    user: User = Depends(require_roles([UserRole.ADMIN, UserRole.PUBLISHER])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER])),
     db: AsyncSession = Depends(get_db),
 ):
     """Move ad to reviewer queue. Reviewer AI pre-processes the strategy."""
@@ -348,7 +349,7 @@ async def submit_for_review(
 async def create_review(
     ad_id: str,
     body: ReviewCreate,
-    user: User = Depends(require_roles([UserRole.REVIEWER, UserRole.ETHICS_REVIEWER])),
+    user: User = Depends(require_roles([UserRole.PROJECT_MANAGER, UserRole.ETHICS_MANAGER])),
     db: AsyncSession = Depends(get_db),
 ):
     review = Review(
@@ -414,7 +415,7 @@ async def publish_advertisement(
 @router.post("/{ad_id}/generate-creatives", response_model=AdvertisementOut)
 async def generate_creatives(
     ad_id: str,
-    user: User = Depends(require_roles([UserRole.ADMIN, UserRole.PUBLISHER])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER])),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -553,7 +554,7 @@ async def serve_website(
 @router.post("/{ad_id}/generate-website", response_model=AdvertisementOut)
 async def generate_website(
     ad_id: str,
-    user: User = Depends(require_roles([UserRole.ADMIN, UserRole.PUBLISHER])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER])),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -606,7 +607,7 @@ async def generate_website(
 async def minor_edit_strategy(
     ad_id: str,
     body: MinorEditRequest,
-    user: User = Depends(require_roles([UserRole.REVIEWER])),
+    user: User = Depends(require_roles([UserRole.PROJECT_MANAGER])),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -655,7 +656,7 @@ async def minor_edit_strategy(
 async def rewrite_strategy(
     ad_id: str,
     body: RewriteStrategyRequest,
-    user: User = Depends(require_roles([UserRole.REVIEWER, UserRole.ADMIN])),
+    user: User = Depends(require_roles([UserRole.PROJECT_MANAGER, UserRole.STUDY_COORDINATOR])),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -718,10 +719,10 @@ async def rewrite_strategy(
 @router.delete("/{ad_id}", status_code=204)
 async def delete_advertisement(
     ad_id: str,
-    user: User = Depends(require_roles([UserRole.ADMIN])),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
     db: AsyncSession = Depends(get_db),
 ):
-    """Permanently delete a campaign and all its related data. Admin only."""
+    """Permanently delete a campaign and all its related data. Study Coordinator only."""
     result = await db.execute(
         select(Advertisement).where(
             Advertisement.id == ad_id,
@@ -750,3 +751,126 @@ async def update_bot_config(
 
     ad.bot_config = body.model_dump(exclude_unset=True)
     return ad
+
+
+# ─── Voice Agent Routes ───────────────────────────────────────────────────────
+
+@router.post("/{ad_id}/voice-agent")
+async def provision_voice_agent(
+    ad_id: str,
+    user: User = Depends(require_roles([UserRole.PUBLISHER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Provision (create or update) the ElevenLabs conversational AI agent for this campaign.
+    Must be called after bot_config is set. Stores the agent_id back in bot_config.
+    """
+    svc = VoicebotAgentService(db)
+    try:
+        agent = await svc.provision_agent(ad_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"ElevenLabs error: {e}")
+    return {"status": "provisioned", "agent_id": agent.get("agent_id"), "agent": agent}
+
+
+@router.get("/{ad_id}/voice-recommendation")
+async def get_voice_recommendation(
+    ad_id: str,
+    user: User = Depends(require_roles([UserRole.PUBLISHER, UserRole.STUDY_COORDINATOR])),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Use Claude to analyze the campaign's target audience and recommend
+    the best ElevenLabs voice profile + conversation style + opening message.
+    """
+    svc = VoicebotAgentService(db)
+    try:
+        recommendation = await svc.recommend_voice(ad_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Recommendation error: {e}")
+    return recommendation
+
+
+@router.get("/{ad_id}/voice-agent/status")
+async def get_voice_agent_status(
+    ad_id: str,
+    user: User = Depends(require_roles([UserRole.PUBLISHER, UserRole.STUDY_COORDINATOR])),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return ElevenLabs agent info for this campaign (name, voice, provisioned status)."""
+    svc = VoicebotAgentService(db)
+    try:
+        status = await svc.get_agent_status(ad_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return status
+
+
+@router.get("/{ad_id}/voice-session/token")
+async def get_voice_session_token(
+    ad_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return a short-lived signed WebSocket URL for the ElevenLabs browser SDK.
+    No auth required — this endpoint is embedded in published landing pages.
+    The signed URL expires after a short window set by ElevenLabs.
+    """
+    svc = VoicebotAgentService(db)
+    try:
+        signed_url = await svc.get_signed_url(ad_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"ElevenLabs error: {e}")
+    return {"signed_url": signed_url}
+
+
+@router.get("/{ad_id}/voice-conversations")
+async def list_voice_conversations(
+    ad_id: str,
+    page_size: int = Query(20, ge=1, le=100),
+    user: User = Depends(require_roles([UserRole.PUBLISHER, UserRole.STUDY_COORDINATOR])),
+    db: AsyncSession = Depends(get_db),
+):
+    """List past voice call sessions for this campaign, fetched from ElevenLabs."""
+    svc = VoicebotAgentService(db)
+    try:
+        result = await svc.list_conversations(ad_id, page_size=page_size)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return result
+
+
+@router.get("/voice-conversations/{conversation_id}/transcript")
+async def get_voice_transcript(
+    conversation_id: str,
+    user: User = Depends(require_roles([UserRole.PUBLISHER, UserRole.STUDY_COORDINATOR])),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch the full transcript and metadata for a single voice conversation."""
+    svc = VoicebotAgentService(db)
+    try:
+        transcript = await svc.get_conversation_transcript(conversation_id)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"ElevenLabs error: {e}")
+    return transcript
+
+
+@router.delete("/{ad_id}/voice-agent")
+async def delete_voice_agent(
+    ad_id: str,
+    user: User = Depends(require_roles([UserRole.PUBLISHER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete the ElevenLabs agent for this campaign. Use when ending/archiving a voicebot."""
+    svc = VoicebotAgentService(db)
+    try:
+        await svc.delete_agent(ad_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"status": "deleted"}

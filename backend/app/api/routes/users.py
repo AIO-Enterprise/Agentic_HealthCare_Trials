@@ -23,7 +23,7 @@ router = APIRouter(prefix="/users", tags=["User Management"])
 @router.post("/", response_model=UserOut)
 async def create_user(
     body: UserCreate,
-    admin: User = Depends(require_roles([UserRole.ADMIN])),
+    admin: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new user for the admin's company."""
@@ -45,7 +45,7 @@ async def create_user(
 
 @router.get("/", response_model=List[UserOut])
 async def list_users(
-    admin: User = Depends(require_roles([UserRole.ADMIN])),
+    admin: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
     db: AsyncSession = Depends(get_db),
 ):
     """List all users in the admin's company."""
@@ -58,7 +58,7 @@ async def list_users(
 @router.patch("/{user_id}/deactivate", response_model=UserOut)
 async def deactivate_user(
     user_id: str,
-    admin: User = Depends(require_roles([UserRole.ADMIN])),
+    admin: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
     db: AsyncSession = Depends(get_db),
 ):
     """Deactivate a user."""

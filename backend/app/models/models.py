@@ -27,9 +27,9 @@ from app.db.database import Base
 # ─── Enums ────────────────────────────────────────────────────────────────────
 
 class UserRole(str, enum.Enum):
-    ADMIN = "admin"
-    REVIEWER = "reviewer"
-    ETHICS_REVIEWER = "ethics_reviewer"
+    STUDY_COORDINATOR = "study_coordinator"
+    PROJECT_MANAGER = "project_manager"
+    ETHICS_MANAGER = "ethics_manager"
     PUBLISHER = "publisher"
 
 
@@ -229,6 +229,7 @@ class Advertisement(Base):
     analytics          = relationship("AdAnalytics", back_populates="advertisement", cascade="all, delete-orphan")
     optimizer_logs     = relationship("OptimizerLog", back_populates="advertisement", cascade="all, delete-orphan")
     reinforcement_logs = relationship("ReinforcementLog", back_populates="advertisement")
+    voice_sessions     = relationship("VoiceSession", back_populates="advertisement", cascade="all, delete-orphan")
 
 
 # ─── Review ───────────────────────────────────────────────────────────────────
@@ -304,3 +305,40 @@ class ReinforcementLog(Base):
 
     company       = relationship("Company", back_populates="reinforcement_logs")
     advertisement = relationship("Advertisement", back_populates="reinforcement_logs")
+
+
+# ─── Voice Sessions ───────────────────────────────────────────────────────────
+# Tracks each browser-initiated ElevenLabs voice call session.
+# Sessions are created by the frontend after connecting via the signed WebSocket URL.
+
+class VoiceSession(Base):
+    __tablename__ = "voice_sessions"
+
+    id                          = Column(String, primary_key=True, default=_uuid)
+    advertisement_id            = Column(String, ForeignKey("advertisements.id"), nullable=False)
+    elevenlabs_conversation_id  = Column(String(256), nullable=True, unique=True)
+    status                      = Column(String(32), default="active")   # active | ended | failed
+    started_at                  = Column(DateTime, default=_now)
+    ended_at                    = Column(DateTime, nullable=True)
+    duration_seconds            = Column(Integer, nullable=True)
+    caller_metadata             = Column(JSON, nullable=True)            # browser, location, etc.
+
+    advertisement = relationship("Advertisement", back_populates="voice_sessions")
+    transcripts   = relationship("CallTranscript", back_populates="session", cascade="all, delete-orphan")
+
+
+# ─── Call Transcripts ─────────────────────────────────────────────────────────
+# Stores speaker turns fetched from ElevenLabs after a session ends.
+
+class CallTranscript(Base):
+    __tablename__ = "call_transcripts"
+
+    id              = Column(String, primary_key=True, default=_uuid)
+    session_id      = Column(String, ForeignKey("voice_sessions.id"), nullable=False)
+    speaker         = Column(String(16), nullable=False)   # "agent" | "user"
+    text            = Column(Text, nullable=False)
+    turn_index      = Column(Integer, nullable=True)
+    timestamp_ms    = Column(Integer, nullable=True)       # ms from call start
+    created_at      = Column(DateTime, default=_now)
+
+    session = relationship("VoiceSession", back_populates="transcripts")

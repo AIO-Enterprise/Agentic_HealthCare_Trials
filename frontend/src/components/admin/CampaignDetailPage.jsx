@@ -1835,7 +1835,7 @@ function CampaignDetailPageInner() {
     setDeleteLoading(true);
     try {
       await adsAPI.delete(id);
-      navigate("/admin");
+      navigate("/study-coordinator");
     } catch (err) {
       setShowDeleteConfirm(false);
       setDeleteLoading(false);
@@ -1947,7 +1947,7 @@ function CampaignDetailPageInner() {
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, marginBottom: 20, position: "relative" }}>
           <div style={{ minWidth: 0 }}>
             <p style={{ fontSize: "0.7rem", fontWeight: 600, letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginBottom: 6 }}>
-              Admin · Campaign
+              Study Coordinator · Campaign
             </p>
             <h1 style={{ fontSize: "1.5rem", fontWeight: 700, color: "#fff", lineHeight: 1.3, margin: 0 }}>
               {ad.title}
@@ -1955,7 +1955,7 @@ function CampaignDetailPageInner() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
             <CampaignStatusBadge status={ad.status} />
-            {role === "admin" && (
+            {role === "study_coordinator" && (
               <button
                 onClick={() => setShowDeleteConfirm(true)}
                 style={{
@@ -2188,7 +2188,7 @@ function CampaignDetailPageInner() {
           )}
 
           {/* Regenerate (admin) */}
-          {hasStrategy && role === "admin" && (
+          {hasStrategy && role === "study_coordinator" && (
             <SectionCard
               title="Regenerate Strategy"
               subtitle="Replace the current strategy with a new AI-generated one using your instructions"
@@ -2516,7 +2516,7 @@ function CampaignDetailPageInner() {
           {/* Analytics */}
           {isPublished && (
             <SectionCard title="Analytics" subtitle="Campaign is live — view performance data">
-              <Link to="/admin/analytics" className="btn--accent" style={{ display: "inline-flex" }}>
+              <Link to="/study-coordinator/analytics" className="btn--accent" style={{ display: "inline-flex" }}>
                 View Analytics
               </Link>
             </SectionCard>

@@ -13,16 +13,16 @@ import { usersAPI } from "../../services/api";
 import { UserPlus, Shield, Eye, Send, Settings } from "lucide-react";
 
 const ROLES = [
-  { value: "admin",           label: "Admin",          icon: Settings },
-  { value: "reviewer",        label: "Reviewer",       icon: Eye },
-  { value: "ethics_reviewer", label: "Ethics Reviewer", icon: Shield },
-  { value: "publisher",       label: "Publisher",      icon: Send },
+  { value: "study_coordinator", label: "Study Coordinator", icon: Settings },
+  { value: "project_manager",   label: "Project Manager",   icon: Eye },
+  { value: "ethics_manager",    label: "Ethics Manager",    icon: Shield },
+  { value: "publisher",         label: "Publisher",         icon: Send },
 ];
 
 export default function UserManagement() {
   const [users,    setUsers]    = useState([]);
   const [showForm, setShowForm] = useState(false);
-  const [form,     setForm]     = useState({ email: "", password: "", full_name: "", role: "reviewer" });
+  const [form,     setForm]     = useState({ email: "", password: "", full_name: "", role: "project_manager" });
   const [loading,  setLoading]  = useState(false);
 
   useEffect(() => { usersAPI.list().then(setUsers).catch(console.error); }, []);
@@ -33,7 +33,7 @@ export default function UserManagement() {
       const user = await usersAPI.create(form);
       setUsers((p) => [...p, user]);
       setShowForm(false);
-      setForm({ email: "", password: "", full_name: "", role: "reviewer" });
+      setForm({ email: "", password: "", full_name: "", role: "project_manager" });
     } catch (err) { alert(err.message); }
     finally { setLoading(false); }
   };

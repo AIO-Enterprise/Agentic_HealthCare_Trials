@@ -16,9 +16,9 @@ from enum import Enum
 # ─── Enums (mirror DB enums for API layer) ────────────────────────────────────
 
 class UserRoleEnum(str, Enum):
-    admin = "admin"
-    reviewer = "reviewer"
-    ethics_reviewer = "ethics_reviewer"
+    study_coordinator = "study_coordinator"
+    project_manager = "project_manager"
+    ethics_manager = "ethics_manager"
     publisher = "publisher"
 
 class AdTypeEnum(str, Enum):

@@ -5,8 +5,19 @@ Owner: Backend Dev 1
 Central config loaded from environment variables.
 """
 
+import os
 from pydantic_settings import BaseSettings
 from typing import Optional
+
+# Resolve .env regardless of which directory the server is started from.
+# Checks: backend/.env → project-root/.env → one further up.
+_HERE = os.path.dirname(os.path.abspath(__file__))          # .../backend/app/core
+_ENV_CANDIDATES = (
+    os.path.join(_HERE, "..", "..", ".env"),                 # backend/.env
+    os.path.join(_HERE, "..", "..", "..", ".env"),           # project-root/.env
+    os.path.join(_HERE, "..", "..", "..", "..", ".env"),     # one above root
+)
+_ENV_FILE = next((p for p in _ENV_CANDIDATES if os.path.exists(p)), ".env")
 
 
 class Settings(BaseSettings):
@@ -33,6 +44,10 @@ class Settings(BaseSettings):
     AWS_REGION: str = "us-east-1"
     BEDROCK_MODEL: str = "us.anthropic.claude-sonnet-4-6"
 
+    # ElevenLabs
+    ELEVENLABS_API_KEY: Optional[str] = None
+    ELEVENLABS_VOICE_ID: str = "EXAVITQu4vr4xnSDxMaL"  # Default: Rachel
+
     # File storage
     UPLOAD_DIR: str = "./uploads"
     OUTPUT_DIR: str = "./outputs"
@@ -40,7 +55,8 @@ class Settings(BaseSettings):
     STATIC_URL: str = "http://127.0.0.1:8000/static"
 
     class Config:
-        env_file = ".env"
+        env_file = _ENV_FILE
+        extra   = "ignore"   # ignore VITE_* and other frontend-only vars in .env
 
 
 settings = Settings()

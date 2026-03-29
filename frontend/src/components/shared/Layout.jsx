@@ -33,16 +33,17 @@
 import React from "react";
 import { Navigate, useLocation, Link } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
+import { useGeneration, GEN_STEPS } from "../../contexts/GenerationContext";
 import {
   LayoutDashboard, Users, FileText, BarChart3,
   LogOut, Shield, Eye, Megaphone, Globe, Bot,
-  Rocket, Share2,
+  Rocket, Share2, Sparkles, X,
 } from "lucide-react";
 
 // ─── RoleGuardedRoute ─────────────────────────────────────────────────────────
 // Usage: wrap a page component in App.jsx to restrict access by role.
 //
-//   <RoleGuardedRoute allowedRoles={["admin"]}>
+//   <RoleGuardedRoute allowedRoles={["study_coordinator"]}>
 //     <AdminDashboard />
 //   </RoleGuardedRoute>
 
@@ -69,18 +70,18 @@ export const ProtectedRoute = RoleGuardedRoute;
 // Add / remove links here when extending a role's feature set.
 
 const SIDEBAR_LINKS_BY_ROLE = {
-  admin: [
-    { label: "Dashboard",       icon: LayoutDashboard, path: "/admin" },
-    { label: "Create Campaign", icon: Megaphone,        path: "/admin/create" },
-    { label: "User Management", icon: Users,            path: "/admin/users" },
-    { label: "My Company",      icon: FileText,         path: "/admin/company" },
-    { label: "Analytics",       icon: BarChart3,        path: "/admin/analytics" },
+  study_coordinator: [
+    { label: "Dashboard",       icon: LayoutDashboard, path: "/study-coordinator" },
+    { label: "Create Campaign", icon: Megaphone,        path: "/study-coordinator/create" },
+    { label: "User Management", icon: Users,            path: "/study-coordinator/users" },
+    { label: "My Company",      icon: FileText,         path: "/study-coordinator/company" },
+    { label: "Analytics",       icon: BarChart3,        path: "/study-coordinator/analytics" },
   ],
-  reviewer: [
-    { label: "Dashboard", icon: LayoutDashboard, path: "/reviewer" },
-    { label: "Analytics", icon: BarChart3,       path: "/reviewer/analytics" },
+  project_manager: [
+    { label: "Dashboard", icon: LayoutDashboard, path: "/project-manager" },
+    { label: "Analytics", icon: BarChart3,       path: "/project-manager/analytics" },
   ],
-  ethics_reviewer: [
+  ethics_manager: [
     { label: "Dashboard",     icon: LayoutDashboard, path: "/ethics" },
     { label: "Ethics Review", icon: Shield,          path: "/ethics/review" },
     { label: "Documents",     icon: FileText,        path: "/ethics/documents" },
@@ -157,11 +158,84 @@ export const Sidebar = AppSidebar;
 //     );
 //   }
 
+function GenerationPill() {
+  const { isGenerating, progress, done, error, adTitle, dismiss } = useGeneration();
+  if (!isGenerating) return null;
+
+  const activeIdx  = GEN_STEPS.findIndex((s) => progress < s.threshold);
+  const currentStep = activeIdx === -1 ? GEN_STEPS[GEN_STEPS.length - 1] : GEN_STEPS[activeIdx];
+
+  const size = 36, stroke = 3, r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const offset = circ - (progress / 100) * circ;
+
+  const bg    = done  ? "rgba(74,222,128,0.12)" : error ? "rgba(239,68,68,0.12)" : "rgba(13,27,42,0.95)";
+  const border = done ? "rgba(74,222,128,0.4)"  : error ? "rgba(239,68,68,0.4)"  : "rgba(255,255,255,0.12)";
+
+  return (
+    <div style={{
+      position: "fixed", bottom: 24, right: 24, zIndex: 999,
+      display: "flex", alignItems: "center", gap: 12,
+      padding: "10px 14px 10px 10px",
+      borderRadius: 16,
+      background: bg,
+      border: `1px solid ${border}`,
+      backdropFilter: "blur(12px)",
+      boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+      maxWidth: 320,
+      transition: "all 0.3s ease",
+    }}>
+      {/* Mini ring */}
+      <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+        <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+          <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth={stroke} />
+          <circle cx={size/2} cy={size/2} r={r} fill="none"
+            stroke={done ? "#4ade80" : error ? "#ef4444" : "url(#pillGrad)"}
+            strokeWidth={stroke} strokeLinecap="round"
+            strokeDasharray={circ} strokeDashoffset={offset}
+            style={{ transition: "stroke-dashoffset 0.3s ease" }}
+          />
+          <defs>
+            <linearGradient id="pillGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#4ade80" />
+              <stop offset="100%" stopColor="#22d3ee" />
+            </linearGradient>
+          </defs>
+        </svg>
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Sparkles size={12} style={{ color: done ? "#4ade80" : "#22d3ee" }} />
+        </div>
+      </div>
+
+      {/* Text */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "#fff", margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {done ? `${adTitle} — Strategy ready!` : error ? "Generation failed" : adTitle}
+        </p>
+        <p style={{ fontSize: "0.68rem", color: "rgba(255,255,255,0.45)", margin: "2px 0 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {done ? "Submitted for review" : error || currentStep.label}
+        </p>
+      </div>
+
+      {/* Progress % or dismiss */}
+      {done || error
+        ? <button onClick={dismiss} style={{ background: "none", border: "none", cursor: "pointer", padding: 2, color: "rgba(255,255,255,0.4)", flexShrink: 0, display: "flex" }}>
+            <X size={14} />
+          </button>
+        : <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "#4ade80", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+            {progress}%
+          </span>
+      }
+    </div>
+  );
+}
+
 export function PageWithSidebar({ children }) {
   return (
     <div className="flex min-h-screen" style={{ backgroundColor: "var(--color-page-bg)" }}>
       <AppSidebar />
       <main className="flex-1 p-8 overflow-auto min-w-0">{children}</main>
+      <GenerationPill />
     </div>
   );
 }

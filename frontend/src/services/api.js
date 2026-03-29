@@ -312,6 +312,25 @@ export const adsAPI = {
 
   delete: (adId) =>
     request(`/advertisements/${adId}`, { method: "DELETE" }),
+
+  // ── Voice Agent (ElevenLabs) ──────────────────────────────────────────────
+  getVoiceRecommendation: (adId) =>
+    request(`/advertisements/${adId}/voice-recommendation`),
+
+  provisionVoiceAgent: (adId) =>
+    request(`/advertisements/${adId}/voice-agent`, { method: "POST" }),
+
+  getVoiceAgentStatus: (adId) =>
+    request(`/advertisements/${adId}/voice-agent/status`),
+
+  deleteVoiceAgent: (adId) =>
+    request(`/advertisements/${adId}/voice-agent`, { method: "DELETE" }),
+
+  listVoiceConversations: (adId, pageSize = 20) =>
+    request(`/advertisements/${adId}/voice-conversations?page_size=${pageSize}`),
+
+  getVoiceTranscript: (conversationId) =>
+    request(`/advertisements/voice-conversations/${conversationId}/transcript`),
 };
 
 // ─── M7/M15: Analytics ───────────────────────────────────────────────────────

@@ -36,9 +36,9 @@ export default function AdminAccountStep({ form, updateForm, loading, onBack, on
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-xl font-bold" style={{ color: "var(--color-input-text)" }}>Admin Account</h2>
+        <h2 className="text-xl font-bold" style={{ color: "var(--color-input-text)" }}>Study Coordinator Account</h2>
         <p className="text-sm mt-1" style={{ color: "var(--color-sidebar-text)" }}>
-          Register the primary admin user (required).
+          Register the primary study coordinator (required).
         </p>
       </div>
 

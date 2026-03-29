@@ -1,11 +1,11 @@
 """
 Creative Agent - Ad Copy + Image Generation
 Owner: AI Dev
-Dependencies: M8 (Advertisements), AWS Bedrock (Claude + Titan Image Generator)
+Dependencies: M8 (Advertisements), AWS Bedrock (Claude + Amazon Nova Canvas)
 
 Flow:
 1. Claude generates structured copy + image prompts for each ad format
-2. Amazon Titan Image Generator v2 produces images via boto3
+2. Amazon Nova Canvas produces images via boto3
 3. Images saved to outputs/<company_id>/<ad_id>/
 4. Returns list of creative dicts with image URLs served via /outputs/
 """
@@ -22,19 +22,18 @@ from app.core.bedrock import get_async_client, get_model, is_configured
 from app.core.config import settings
 
 
-# Titan Image Generator v2 supported dimension pairs (width, height)
-# Ref: https://docs.aws.amazon.com/bedrock/latest/userguide/titan-image-models.html
+# Nova Canvas: width & height must be multiples of 16, 320–4096, product ≤ 4,194,304
 _FORMAT_DIMENSIONS = {
     "1080x1080": (1024, 1024),
     "square":    (1024, 1024),
-    "1080x1920": (896, 1152),   # portrait / story — closest valid to 9:16
-    "story":     (896, 1152),
-    "portrait":  (896, 1152),
-    "9x16":      (896, 1152),
-    "16:9":      (1152, 896),   # landscape / banner — closest valid to 16:9
-    "landscape": (1152, 896),
-    "banner":    (1152, 896),
-    "16x9":      (1152, 896),
+    "1080x1920": (768,  1344),  # 9:16 portrait / story
+    "story":     (768,  1344),
+    "portrait":  (768,  1344),
+    "9x16":      (768,  1344),
+    "16:9":      (1344, 768),   # 16:9 landscape / banner
+    "landscape": (1344, 768),
+    "banner":    (1344, 768),
+    "16x9":      (1344, 768),
 }
 
 _CREATIVE_SYSTEM = """You are an expert advertising creative director.
@@ -46,7 +45,7 @@ Rules for image prompts:
 - Absolutely NO text, words, letters, logos, or watermarks in the image
 - Describe composition, lighting, mood, subject, and background in detail
 - Incorporate the brand visual style from the strategy if available
-- IMPORTANT: image_prompt must be under 512 characters total
+- image_prompt may be up to 1024 characters
 
 Respond ONLY with valid JSON (no markdown fences, no extra text):
 {
@@ -57,7 +56,7 @@ Respond ONLY with valid JSON (no markdown fences, no extra text):
       "headline": "<short punchy headline, max 8 words>",
       "body": "<2-3 sentence ad body text>",
       "cta": "<call to action, max 4 words>",
-      "image_prompt": "<detailed image generation prompt for Titan Image Generator v2>"
+      "image_prompt": "<detailed image generation prompt for Nova Canvas>"
     }
   ]
 }"""
@@ -143,7 +142,7 @@ If no formats are defined, generate three formats: 1080x1080 Static, 1080x1920 S
             )
             return self._mock_brief(ad)
 
-    # ── Private: Titan Image Generator ──────────────────────────────────────
+    # ── Private: Nova Canvas ─────────────────────────────────────────────────
 
     def _generate_image(
         self,
@@ -155,9 +154,8 @@ If no formats are defined, generate three formats: 1080x1080 Static, 1080x1920 S
     ) -> str | None:
         """
         Synchronous — run via asyncio.to_thread.
-        Calls Amazon Titan Image Generator v2 and saves PNG to disk.
-        Returns the URL path (e.g. /outputs/<company_id>/<ad_id>/creative_0_square.png)
-        or None on failure.
+        Calls Amazon Nova Canvas on Bedrock and saves PNG to disk.
+        Returns the URL path or None on failure.
         """
         width, height = self._get_dimensions(format_name)
 
@@ -169,23 +167,26 @@ If no formats are defined, generate three formats: 1080x1080 Static, 1080x1920 S
                 aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
             )
 
-            safe_prompt = (prompt or "Professional advertisement, modern minimal design, clean composition")[:512]
+            safe_prompt = (prompt or "Professional advertisement, modern minimal design, clean composition")[:1024]
+
             body = json.dumps({
                 "taskType": "TEXT_IMAGE",
                 "textToImageParams": {
-                    "text": safe_prompt,
-                    "negativeText": "text, words, letters, watermark, blurry, distorted, low quality, ugly",
+                    "text":         safe_prompt,
+                    "negativeText": "text, words, letters, watermark, blurry, distorted, low quality, ugly, nsfw",
                 },
                 "imageGenerationConfig": {
                     "numberOfImages": 1,
-                    "height": height,
-                    "width": width,
-                    "cfgScale": 8.0,
+                    "height":         height,
+                    "width":          width,
+                    "quality":        "premium",
+                    "cfgScale":       7.5,
+                    "seed":           0,
                 },
             })
 
             response = bedrock.invoke_model(
-                modelId="amazon.titan-image-generator-v2:0",
+                modelId="amazon.nova-canvas-v1:0",
                 body=body,
                 contentType="application/json",
                 accept="application/json",
@@ -204,13 +205,12 @@ If no formats are defined, generate three formats: 1080x1080 Static, 1080x1920 S
             with open(file_path, "wb") as f:
                 f.write(image_bytes)
 
-            # Return URL path served by /outputs static mount
             return f"/outputs/{self.company_id}/{ad_id}/{filename}"
 
         except Exception as exc:
             import logging
             logging.getLogger(__name__).error(
-                "Titan image generation failed [format=%s, ad=%s]: %s",
+                "Nova Canvas image generation failed [format=%s, ad=%s]: %s",
                 format_name, ad_id, exc,
             )
             return None

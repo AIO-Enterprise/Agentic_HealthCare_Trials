@@ -2,12 +2,13 @@ import React, { createContext, useContext, useState, useRef, useCallback, useEff
 import { adsAPI } from "../services/api";
 
 export const GEN_STEPS = [
-  { label: "Reading Protocol",          desc: "Extracting details, eligibility criteria, endpoints", threshold: 12 },
-  { label: "Competitor Analysis",       desc: "Comparing against campaigns and market data",          threshold: 32 },
-  { label: "Building Campaign Strategy", desc: "Generating TOFU/MOFU/BOFU funnel concepts",          threshold: 58 },
-  { label: "Writing Ad Copy & Scripts", desc: "Creating video scripts and image ad briefs",           threshold: 78 },
-  { label: "Designing Questionnaire",   desc: "Building eligibility pre-screener questions",          threshold: 92 },
-  { label: "Calculating Budget",        desc: "Phase-based budget with projected ROI",                threshold: 100 },
+  { label: "Reading Protocol",           desc: "Extracting details, eligibility criteria, endpoints", threshold: 10 },
+  { label: "Competitor Analysis",        desc: "Comparing against campaigns and market data",          threshold: 25 },
+  { label: "Building Campaign Strategy", desc: "Generating TOFU/MOFU/BOFU funnel concepts",           threshold: 45 },
+  { label: "Writing Ad Copy & Scripts",  desc: "Creating video scripts and image ad briefs",          threshold: 60 },
+  { label: "Generating Ad Creatives",    desc: "Building visual assets and ad copy for each format",  threshold: 78 },
+  { label: "Building Landing Page",      desc: "Generating branded website from campaign strategy",   threshold: 92 },
+  { label: "Finalising Campaign",        desc: "Submitting for review and calculating budget",        threshold: 100 },
 ];
 
 const GenerationContext = createContext(null);
@@ -28,7 +29,7 @@ export function GenerationProvider({ children }) {
     setProgress(Math.round(pct));
   }, []);
 
-  const startGeneration = useCallback(async (adId, title) => {
+  const startGeneration = useCallback(async (adId, title, adTypes = []) => {
     if (timerRef.current) clearInterval(timerRef.current);
     startedAt.current = Date.now();
     setAdTitle(title || "Campaign");
@@ -38,9 +39,15 @@ export function GenerationProvider({ children }) {
     setError(null);
     timerRef.current = setInterval(tick, 250);
 
+    const types = Array.isArray(adTypes) ? adTypes : [adTypes];
+    const hasAds     = types.includes("advertisements") || types.includes("ads");
+    const hasWebsite = types.includes("website");
+
     try {
       await adsAPI.generateStrategy(adId);
       await adsAPI.submitForReview(adId);
+      if (hasAds)     await adsAPI.generateCreatives(adId);
+      if (hasWebsite) await adsAPI.generateWebsite(adId);
       clearInterval(timerRef.current);
       setProgress(100);
       setDone(true);

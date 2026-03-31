@@ -440,10 +440,10 @@ async def generate_creatives(
     ad = result.scalar_one_or_none()
     if not ad:
         raise HTTPException(status_code=404, detail="Advertisement not found")
-    if ad.status not in (AdStatus.APPROVED, AdStatus.PUBLISHED):
+    if ad.status not in (AdStatus.APPROVED, AdStatus.PUBLISHED, AdStatus.UNDER_REVIEW, AdStatus.STRATEGY_CREATED):
         raise HTTPException(
             status_code=400,
-            detail="Creatives can only be generated for approved or published campaigns.",
+            detail="Creatives can only be generated after strategy creation.",
         )
 
     from app.services.ai.creative import CreativeService
@@ -578,10 +578,10 @@ async def generate_website(
     ad = result.scalar_one_or_none()
     if not ad:
         raise HTTPException(status_code=404, detail="Advertisement not found")
-    if ad.status not in (AdStatus.APPROVED, AdStatus.PUBLISHED):
+    if ad.status not in (AdStatus.APPROVED, AdStatus.PUBLISHED, AdStatus.UNDER_REVIEW, AdStatus.STRATEGY_CREATED):
         raise HTTPException(
             status_code=400,
-            detail="Website can only be generated for approved or published campaigns.",
+            detail="Website can only be generated after strategy creation.",
         )
 
     brand_kit_result = await db.execute(

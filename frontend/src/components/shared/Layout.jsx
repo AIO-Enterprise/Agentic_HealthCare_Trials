@@ -37,7 +37,7 @@ import { useGeneration, GEN_STEPS } from "../../contexts/GenerationContext";
 import {
   LayoutDashboard, Users, FileText, BarChart3,
   LogOut, Shield, Eye, Megaphone, Globe, Bot,
-  Rocket, Share2, Sparkles, X,
+  Rocket, Share2, Sparkles, X, CheckCircle2,
 } from "lucide-react";
 
 // ─── RoleGuardedRoute ─────────────────────────────────────────────────────────
@@ -160,39 +160,176 @@ export const Sidebar = AppSidebar;
 
 function GenerationPill() {
   const { isGenerating, progress, done, error, adTitle, dismiss } = useGeneration();
+  const location = useLocation();
+  const [expanded, setExpanded] = React.useState(false);
+
+  const isOnCreatePage = location.pathname === "/study-coordinator/create";
+
+  // Auto-collapse whenever the user navigates away from the create page
+  React.useEffect(() => {
+    if (!isOnCreatePage) setExpanded(false);
+  }, [isOnCreatePage]);
+
   if (!isGenerating) return null;
 
-  const activeIdx  = GEN_STEPS.findIndex((s) => progress < s.threshold);
+  const activeIdx   = GEN_STEPS.findIndex((s) => progress < s.threshold);
   const currentStep = activeIdx === -1 ? GEN_STEPS[GEN_STEPS.length - 1] : GEN_STEPS[activeIdx];
 
-  const size = 36, stroke = 3, r = (size - stroke) / 2;
-  const circ = 2 * Math.PI * r;
-  const offset = circ - (progress / 100) * circ;
+  // ── Small ring (pill) ───────────────────────────────────────────────────────
+  const ps = 36, pst = 3, pr = (ps - pst) / 2;
+  const pc = 2 * Math.PI * pr;
+  const poff = pc - (progress / 100) * pc;
 
-  const bg    = done  ? "rgba(74,222,128,0.12)" : error ? "rgba(239,68,68,0.12)" : "rgba(13,27,42,0.95)";
-  const border = done ? "rgba(74,222,128,0.4)"  : error ? "rgba(239,68,68,0.4)"  : "rgba(255,255,255,0.12)";
+  const pillBg     = done ? "rgba(74,222,128,0.12)" : error ? "rgba(239,68,68,0.12)" : "rgba(13,27,42,0.95)";
+  const pillBorder = done ? "rgba(74,222,128,0.4)"  : error ? "rgba(239,68,68,0.4)"  : "rgba(255,255,255,0.12)";
 
+  // ── Expanded overlay (covers main content, to the right of the sidebar) ────
+  if (expanded && isOnCreatePage) {
+    const bs = 116, bst = 7, br = (bs - bst) / 2;
+    const bc   = 2 * Math.PI * br;
+    const boff = bc - (progress / 100) * bc;
+
+    return (
+      <div style={{
+        position: "fixed", top: 0, bottom: 0, right: 0, left: 240,
+        zIndex: 998,
+        background: "rgba(10,18,30,0.97)",
+        backdropFilter: "blur(20px)",
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        gap: 28, padding: "40px 24px",
+        animation: "fadeIn 0.2s ease",
+      }}>
+        <style>{`@keyframes fadeIn{from{opacity:0}to{opacity:1}} @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+
+        {/* Minimise button */}
+        <button
+          onClick={() => setExpanded(false)}
+          style={{
+            position: "absolute", top: 20, right: 24,
+            background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)",
+            borderRadius: 8, padding: "6px 14px", cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 6,
+            fontSize: "0.75rem", color: "rgba(255,255,255,0.5)", fontFamily: "inherit",
+          }}
+        >
+          <X size={13} /> Minimise
+        </button>
+
+        {/* Big progress ring */}
+        <div style={{ position: "relative", width: bs, height: bs }}>
+          <svg width={bs} height={bs} style={{ transform: "rotate(-90deg)" }}>
+            <circle cx={bs/2} cy={bs/2} r={br} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={bst} />
+            <circle cx={bs/2} cy={bs/2} r={br} fill="none"
+              stroke={done ? "#4ade80" : error ? "#ef4444" : "url(#bigGrad)"}
+              strokeWidth={bst} strokeLinecap="round"
+              strokeDasharray={bc} strokeDashoffset={boff}
+              style={{ transition: "stroke-dashoffset 0.4s ease" }}
+            />
+            <defs>
+              <linearGradient id="bigGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#4ade80" />
+                <stop offset="100%" stopColor="#22d3ee" />
+              </linearGradient>
+            </defs>
+          </svg>
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4 }}>
+            <span style={{ fontSize: "1.55rem", fontWeight: 800, color: done ? "#4ade80" : "#fff", fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
+              {progress}%
+            </span>
+            <Sparkles size={13} style={{ color: done ? "#4ade80" : "#22d3ee" }} />
+          </div>
+        </div>
+
+        {/* Title & status */}
+        <div style={{ textAlign: "center" }}>
+          <p style={{ fontSize: "1.05rem", fontWeight: 700, color: "#fff", margin: "0 0 6px" }}>
+            {done ? `${adTitle} — Ready!` : error ? "Generation Failed" : adTitle}
+          </p>
+          <p style={{ fontSize: "0.8rem", color: "rgba(255,255,255,0.38)", margin: 0 }}>
+            {done ? "Submitted for review" : error || "Running in background — you can navigate away safely"}
+          </p>
+        </div>
+
+        {/* Step list */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 7, width: "100%", maxWidth: 420 }}>
+          {GEN_STEPS.map((step, i) => {
+            const stepDone   = progress >= step.threshold;
+            const stepActive = !stepDone && (i === 0 ? progress > 0 : progress >= GEN_STEPS[i - 1].threshold);
+            return (
+              <div key={i} style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "9px 12px", borderRadius: 10,
+                background: stepDone ? "rgba(74,222,128,0.07)" : stepActive ? "rgba(34,211,238,0.07)" : "rgba(255,255,255,0.03)",
+                border: `1px solid ${stepDone ? "rgba(74,222,128,0.18)" : stepActive ? "rgba(34,211,238,0.18)" : "rgba(255,255,255,0.05)"}`,
+                transition: "all 0.3s ease",
+              }}>
+                <div style={{
+                  width: 20, height: 20, borderRadius: "50%", flexShrink: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  background: stepDone ? "rgba(74,222,128,0.2)" : stepActive ? "rgba(34,211,238,0.15)" : "transparent",
+                  border: `1.5px solid ${stepDone ? "#4ade80" : stepActive ? "#22d3ee" : "rgba(255,255,255,0.12)"}`,
+                }}>
+                  {stepDone
+                    ? <CheckCircle2 size={11} style={{ color: "#4ade80" }} />
+                    : stepActive
+                    ? <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#22d3ee" }} />
+                    : null}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: "0.78rem", fontWeight: stepActive ? 700 : 500, color: stepDone ? "#4ade80" : stepActive ? "#22d3ee" : "rgba(255,255,255,0.28)", margin: 0 }}>
+                    {step.label}
+                  </p>
+                  <p style={{ fontSize: "0.68rem", color: "rgba(255,255,255,0.22)", margin: "1px 0 0" }}>
+                    {step.desc}
+                  </p>
+                </div>
+                {stepActive && !done && (
+                  <div style={{ width: 12, height: 12, borderRadius: "50%", border: "2px solid #22d3ee", borderTopColor: "transparent", animation: "spin 0.8s linear infinite", flexShrink: 0 }} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {(done || error) && (
+          <button
+            onClick={dismiss}
+            style={{ padding: "10px 36px", borderRadius: 10, background: "var(--color-accent)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "0.875rem", fontFamily: "inherit" }}
+          >
+            {error ? "Dismiss" : "Done"}
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // ── Collapsed pill (bottom-right) ───────────────────────────────────────────
   return (
-    <div style={{
-      position: "fixed", bottom: 24, right: 24, zIndex: 999,
-      display: "flex", alignItems: "center", gap: 12,
-      padding: "10px 14px 10px 10px",
-      borderRadius: 16,
-      background: bg,
-      border: `1px solid ${border}`,
-      backdropFilter: "blur(12px)",
-      boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
-      maxWidth: 320,
-      transition: "all 0.3s ease",
-    }}>
+    <div
+      onClick={() => isOnCreatePage && setExpanded(true)}
+      title={isOnCreatePage ? "Click to expand generation progress" : undefined}
+      style={{
+        position: "fixed", bottom: 24, right: 24, zIndex: 999,
+        display: "flex", alignItems: "center", gap: 12,
+        padding: "10px 14px 10px 10px",
+        borderRadius: 16,
+        background: pillBg,
+        border: `1px solid ${pillBorder}`,
+        backdropFilter: "blur(12px)",
+        boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+        maxWidth: 320,
+        cursor: isOnCreatePage ? "pointer" : "default",
+        transition: "all 0.3s ease",
+      }}
+    >
       {/* Mini ring */}
-      <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
-        <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
-          <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth={stroke} />
-          <circle cx={size/2} cy={size/2} r={r} fill="none"
+      <div style={{ position: "relative", width: ps, height: ps, flexShrink: 0 }}>
+        <svg width={ps} height={ps} style={{ transform: "rotate(-90deg)" }}>
+          <circle cx={ps/2} cy={ps/2} r={pr} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth={pst} />
+          <circle cx={ps/2} cy={ps/2} r={pr} fill="none"
             stroke={done ? "#4ade80" : error ? "#ef4444" : "url(#pillGrad)"}
-            strokeWidth={stroke} strokeLinecap="round"
-            strokeDasharray={circ} strokeDashoffset={offset}
+            strokeWidth={pst} strokeLinecap="round"
+            strokeDasharray={pc} strokeDashoffset={poff}
             style={{ transition: "stroke-dashoffset 0.3s ease" }}
           />
           <defs>
@@ -217,15 +354,20 @@ function GenerationPill() {
         </p>
       </div>
 
-      {/* Progress % or dismiss */}
+      {/* % or dismiss */}
       {done || error
-        ? <button onClick={dismiss} style={{ background: "none", border: "none", cursor: "pointer", padding: 2, color: "rgba(255,255,255,0.4)", flexShrink: 0, display: "flex" }}>
+        ? <button onClick={(e) => { e.stopPropagation(); dismiss(); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 2, color: "rgba(255,255,255,0.4)", flexShrink: 0, display: "flex" }}>
             <X size={14} />
           </button>
         : <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "#4ade80", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
             {progress}%
           </span>
       }
+
+      {/* Expand hint only on create page */}
+      {isOnCreatePage && !done && !error && (
+        <span style={{ fontSize: "0.65rem", color: "rgba(255,255,255,0.28)", marginLeft: 2, flexShrink: 0 }}>↗</span>
+      )}
     </div>
   );
 }

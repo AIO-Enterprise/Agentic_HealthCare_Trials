@@ -21,7 +21,7 @@ import { useNavigate } from "react-router-dom";
 import { PageWithSidebar, SectionCard } from "../shared/Layout";
 import { adsAPI, companyAPI } from "../../services/api";
 import { useGeneration } from "../../contexts/GenerationContext";
-import { Globe, Image, Bot, MessageSquare, Sparkles, FileText, X, Upload, MapPin, ChevronDown, Check, Users, Megaphone, ArrowLeft, ArrowRight, Plus } from "lucide-react";
+import { Sparkles, FileText, X, Upload, MapPin, ChevronDown, Check, Users, Megaphone, ArrowLeft, ArrowRight, Plus } from "lucide-react";
 
 
 // Accepted MIME types and their display labels
@@ -508,18 +508,55 @@ function LocationMultiPicker({ locations, companyLocations, onChange }) {
   );
 }
 
-const AD_TYPES = [
-  { value: "website",  label: "Website",       icon: Globe,         desc: "AI-generated marketing website" },
-  { value: "ads",      label: "Advertisements", icon: Image,         desc: "Display, social, and search ads" },
-  { value: "voicebot", label: "Voicebot",        icon: Bot,           desc: "Voice-based conversational agent", requiresWebsite: true },
-  { value: "chatbot",  label: "Chatbot",         icon: MessageSquare, desc: "Text-based conversational agent", requiresWebsite: true },
+// Campaign category groups — shown in Step 1 instead of ad-type picker.
+// All four output types (website, ads, voicebot, chatbot) are always enabled.
+const CAMPAIGN_GROUPS = [
+  {
+    label: "Search & Intent-Based Campaigns",
+    options: [
+      { value: "seo",              label: "Search Engine Optimization (SEO)" },
+      { value: "sge",              label: "Search Generative Experience (SGE)" },
+      { value: "ppc_sem",          label: "Pay-Per-Click (PPC / SEM)" },
+      { value: "performance_max",  label: "Performance Max" },
+    ],
+  },
+  {
+    label: "Social & Engagement Campaigns",
+    options: [
+      { value: "smm",                        label: "Social Media Marketing (SMM)" },
+      { value: "short_form_video",            label: "Short-form Video" },
+      { value: "influencer_affiliate",        label: "Influencer & Affiliate Marketing" },
+    ],
+  },
+  {
+    label: "Visual & Awareness Campaigns",
+    options: [
+      { value: "display_advertising", label: "Display Advertising" },
+      { value: "video_ads",           label: "Video Ads" },
+      { value: "native_advertising",  label: "Native Advertising" },
+    ],
+  },
+  {
+    label: "Retention & Direct Action Campaigns",
+    options: [
+      { value: "email_marketing",       label: "Email Marketing" },
+      { value: "remarketing_retargeting", label: "Remarketing / Retargeting" },
+      { value: "mobile_marketing",      label: "Mobile Marketing" },
+    ],
+  },
 ];
 
 const PLATFORMS = ["Google Ads", "Meta/Instagram", "LinkedIn", "Twitter/X", "YouTube", "TikTok", "Email"];
 
+// Shown as a branch when SMM is selected in Step 1
+const SOCIAL_PLATFORMS = [
+  "Meta Ads", "LinkedIn", "Twitter / X",
+  "YouTube", "TikTok", "Snapchat", "Pinterest",
+];
+
 export default function CampaignCreator() {
   const navigate    = useNavigate();
-  const { startGeneration } = useGeneration();
+  const { startGeneration, isGenerating } = useGeneration();
   const [step,       setStep]       = useState(1);
   const [loading,    setLoading]    = useState(false);
   const [createdAd,  setCreatedAd]  = useState(null);
@@ -535,7 +572,9 @@ export default function CampaignCreator() {
 
   const [form, setForm] = useState({
     title: "",
-    ad_types: [],
+    ad_types: ["website", "ads", "voicebot", "chatbot"], // always all four
+    campaign_category: "",
+    social_platforms: [], // populated via SMM branch in Step 1
     budget: "",
     start_date: "",
     end_date: "",
@@ -558,25 +597,18 @@ export default function CampaignCreator() {
 
   const update = (k, v) => setForm((p) => ({ ...p, [k]: v }));
 
-  const toggleAdType = (value, locked) => {
-    if (locked) return;
-    setForm((prev) => {
-      const isSelected = prev.ad_types.includes(value);
-      if (value === "website" && isSelected) {
-        return { ...prev, ad_types: prev.ad_types.filter((x) => !["website", "voicebot", "chatbot"].includes(x)) };
-      }
-      return {
-        ...prev,
-        ad_types: isSelected ? prev.ad_types.filter((x) => x !== value) : [...prev.ad_types, value],
-      };
-    });
-  };
-
   const togglePlatform = (p) => setForm((prev) => ({
     ...prev,
     platforms: prev.platforms.includes(p)
       ? prev.platforms.filter((x) => x !== p)
       : [...prev.platforms, p],
+  }));
+
+  const toggleSocialPlatform = (p) => setForm((prev) => ({
+    ...prev,
+    social_platforms: prev.social_platforms.includes(p)
+      ? prev.social_platforms.filter((x) => x !== p)
+      : [...prev.social_platforms, p],
   }));
 
   // Compute human-readable duration label from start/end dates
@@ -599,6 +631,8 @@ export default function CampaignCreator() {
       const ad = await adsAPI.create({
         title:             form.title,
         ad_type:           form.ad_types,
+        campaign_category: form.campaign_category || null,
+        platforms:         form.campaign_category === "smm" ? form.social_platforms : form.platforms,
         budget:            form.budget ? parseFloat(form.budget) : null,
         duration:          computeDuration(form.start_date, form.end_date),
         trial_start_date:  form.start_date || null,
@@ -630,11 +664,9 @@ export default function CampaignCreator() {
   };
 
   const handleGenerate = () => {
-    startGeneration(createdAd.id, createdAd.title);
+    startGeneration(createdAd.id, createdAd.title, createdAd.ad_type);
     navigate("/study-coordinator");
   };
-
-  const websiteSelected = form.ad_types.includes("website");
 
   // ── Step definitions ─────────────────────────────────────────────────────
   const WIZARD_STEPS = [
@@ -647,7 +679,7 @@ export default function CampaignCreator() {
   ];
 
   const canNext = () => {
-    if (step === 1) return form.ad_types.length > 0;
+    if (step === 1) return form.campaign_category !== "";
     if (step === 2) return form.title.trim().length > 0;
     return true;
   };
@@ -745,6 +777,29 @@ export default function CampaignCreator() {
 
   return (
     <PageWithSidebar>
+      {/* ── Generation blocking overlay ─────────────────────────────────────── */}
+      {isGenerating && (
+        <div style={{
+          position: "fixed", top: 0, bottom: 0, right: 0, left: 240,
+          zIndex: 50,
+          background: "rgba(10,18,30,0.55)",
+          backdropFilter: "blur(6px)",
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          gap: 12, pointerEvents: "all",
+        }}>
+          <Sparkles size={36} style={{ color: "#22d3ee", opacity: 0.7 }} />
+          <p style={{ fontSize: "1rem", fontWeight: 700, color: "#fff", margin: 0 }}>
+            Generation in progress
+          </p>
+          <p style={{ fontSize: "0.82rem", color: "rgba(255,255,255,0.5)", margin: 0, textAlign: "center", maxWidth: 340 }}>
+            Please wait until the current campaign is fully generated before starting a new one.
+          </p>
+          <p style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.3)", margin: 0 }}>
+            Click the progress indicator ↘ to track progress
+          </p>
+        </div>
+      )}
+
       <div className="page-header">
         <div>
           <h1 className="page-header__title">Create Campaign</h1>
@@ -758,45 +813,131 @@ export default function CampaignCreator() {
 
           {/* ── Step 1: Campaign Type ─────────────────────────────────────── */}
           {step === 1 && (
-            <SectionCard title="Campaign Type" subtitle="Select one or more. Voicebot and Chatbot require Website first.">
-              <div className="grid grid-cols-2 gap-3">
-                {AD_TYPES.map((t) => {
-                  const Icon   = t.icon;
-                  const active = form.ad_types.includes(t.value);
-                  const locked = !!t.requiresWebsite && !websiteSelected;
+            <SectionCard title="Campaign Type" subtitle="Choose the marketing strategy that best fits your campaign.">
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                {CAMPAIGN_GROUPS.map((group) => {
+                  const enabled = group.label === "Social & Engagement Campaigns";
+                  const groupActive = group.options.some(o => o.value === form.campaign_category);
                   return (
                     <div
-                      key={t.value}
-                      onClick={() => toggleAdType(t.value, locked)}
+                      key={group.label}
                       style={{
-                        display: "flex", alignItems: "center", gap: "12px",
-                        padding: "16px", borderRadius: "12px",
-                        border: `2px solid ${active ? "var(--color-accent)" : "var(--color-card-border)"}`,
-                        backgroundColor: active ? "var(--color-accent-subtle)" : "var(--color-card-bg)",
-                        opacity: locked ? 0.4 : 1,
-                        cursor: locked ? "not-allowed" : "pointer",
+                        borderRadius: 12,
+                        border: `2px solid ${groupActive ? "var(--color-accent)" : "var(--color-card-border)"}`,
+                        backgroundColor: groupActive ? "var(--color-accent-subtle)" : "var(--color-card-bg)",
+                        padding: "18px 20px",
                         transition: "border-color 0.15s, background-color 0.15s",
-                        userSelect: "none",
+                        opacity: enabled ? 1 : 0.45,
+                        position: "relative",
                       }}
                     >
-                      <Icon size={24} style={{ color: active ? "var(--color-accent)" : "var(--color-sidebar-text)", flexShrink: 0 }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                          <span style={{ fontSize: "0.875rem", fontWeight: 600, color: "var(--color-input-text)" }}>{t.label}</span>
-                          {locked && <span style={{ fontSize: "0.7rem", padding: "1px 6px", borderRadius: "4px", backgroundColor: "var(--color-btn-ghost-bg)", color: "var(--color-sidebar-text)" }}>needs Website</span>}
-                          {active && <span style={{ fontSize: "0.7rem", padding: "1px 6px", borderRadius: "4px", backgroundColor: "var(--color-accent-subtle)", color: "var(--color-accent-text)" }}>selected</span>}
-                        </div>
-                        <p style={{ fontSize: "0.75rem", marginTop: "2px", color: "var(--color-sidebar-text)" }}>{t.desc}</p>
+                      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 14 }}>
+                        <p style={{
+                          fontSize: "0.82rem", fontWeight: 700,
+                          color: "var(--color-accent)",
+                          lineHeight: 1.3, margin: 0,
+                        }}>
+                          {group.label}
+                        </p>
+                        {!enabled && (
+                          <span style={{
+                            flexShrink: 0, fontSize: "0.65rem", fontWeight: 600,
+                            padding: "2px 7px", borderRadius: 4,
+                            backgroundColor: "var(--color-btn-ghost-bg)",
+                            color: "var(--color-sidebar-text)",
+                            whiteSpace: "nowrap",
+                          }}>
+                            Coming Soon
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {group.options.map((opt, i) => {
+                          const isActive = form.campaign_category === opt.value;
+                          const isSmmActive = isActive && opt.value === "smm";
+                          return (
+                            <React.Fragment key={opt.value}>
+                              <div
+                                onClick={() => enabled && update("campaign_category", opt.value)}
+                                style={{
+                                  display: "flex", alignItems: "center", gap: 8,
+                                  cursor: enabled ? "pointer" : "not-allowed",
+                                  userSelect: "none",
+                                }}
+                              >
+                                <span style={{
+                                  fontSize: "0.82rem",
+                                  color: isActive ? "var(--color-input-text)" : "var(--color-sidebar-text)",
+                                  fontWeight: isActive ? 600 : 400,
+                                  lineHeight: 1.4,
+                                }}>
+                                  {i + 1}. {opt.label}
+                                </span>
+                                {isActive && (
+                                  <span style={{
+                                    flexShrink: 0,
+                                    width: 14, height: 14, borderRadius: "50%",
+                                    backgroundColor: "var(--color-accent)",
+                                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                                  }}>
+                                    <Check size={9} strokeWidth={3} color="#fff" />
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* ── SMM branch: social platform picker ── */}
+                              {isSmmActive && (
+                                <div style={{
+                                  marginTop: 4, marginLeft: 16,
+                                  padding: "14px 16px",
+                                  borderRadius: 10,
+                                  border: "1px solid var(--color-card-border)",
+                                  backgroundColor: "var(--color-page-bg, #0f1620)",
+                                }}>
+                                  <p style={{
+                                    fontSize: "0.72rem", fontWeight: 700,
+                                    textTransform: "uppercase", letterSpacing: "0.06em",
+                                    color: "var(--color-sidebar-text)", marginBottom: 10,
+                                  }}>
+                                    Select target platforms
+                                  </p>
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                                    {SOCIAL_PLATFORMS.map((sp) => {
+                                      const spActive = form.social_platforms.includes(sp);
+                                      return (
+                                        <button
+                                          key={sp}
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); toggleSocialPlatform(sp); }}
+                                          style={{
+                                            padding: "5px 12px", borderRadius: 999, fontSize: "0.78rem",
+                                            fontWeight: spActive ? 600 : 400, cursor: "pointer",
+                                            border: `1.5px solid ${spActive ? "var(--color-accent)" : "var(--color-card-border)"}`,
+                                            backgroundColor: spActive ? "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.12)" : "transparent",
+                                            color: spActive ? "var(--color-accent)" : "var(--color-sidebar-text)",
+                                            transition: "all 0.15s",
+                                          }}
+                                        >
+                                          {sp}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                  {form.social_platforms.length > 0 && (
+                                    <p style={{ fontSize: "0.72rem", marginTop: 10, color: "var(--color-accent)", fontWeight: 500 }}>
+                                      {form.social_platforms.length} platform{form.social_platforms.length !== 1 ? "s" : ""} selected
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
                       </div>
                     </div>
                   );
                 })}
               </div>
-              {form.ad_types.length > 0 && (
-                <p style={{ fontSize: "0.75rem", marginTop: "12px", fontWeight: 500, color: "var(--color-accent-text)" }}>
-                  Selected: {form.ad_types.join(", ")}
-                </p>
-              )}
               <NavBar />
             </SectionCard>
           )}
@@ -866,20 +1007,43 @@ export default function CampaignCreator() {
             </SectionCard>
           )}
 
-          {/* ── Step 4: Audience & Platforms ────────────────────────────── */}
+          {/* ── Step 4: Audience ────────────────────────────── */}
           {step === 4 && (
-            <SectionCard title="Audience & Platforms" subtitle="Define who you want to reach and where.">
+            <SectionCard title="Target Audience" subtitle="Define who you want to reach.">
               <div className="space-y-5">
-                <div>
-                  <label className="block text-sm font-medium mb-2" style={{ color: "var(--color-input-text)" }}>Target Platforms</label>
-                  <div className="flex flex-wrap gap-2">
-                    {PLATFORMS.map((p) => (
-                      <button key={p} type="button" onClick={() => togglePlatform(p)} className={form.platforms.includes(p) ? "platform-pill--active" : "platform-pill"}>{p}</button>
-                    ))}
+                {/* Social platforms summary — shown if SMM was selected in Step 1 */}
+                {form.campaign_category === "smm" && form.social_platforms.length > 0 && (
+                  <div style={{
+                    padding: "12px 16px", borderRadius: 10,
+                    border: "1px solid var(--color-card-border)",
+                    backgroundColor: "var(--color-card-bg)",
+                  }}>
+                    <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)", marginBottom: 8 }}>
+                      Social Platforms
+                    </p>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {form.social_platforms.map(sp => (
+                        <span key={sp} style={{
+                          padding: "3px 10px", borderRadius: 999, fontSize: "0.78rem", fontWeight: 500,
+                          border: "1.5px solid var(--color-accent)",
+                          backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.12)",
+                          color: "var(--color-accent)",
+                        }}>
+                          {sp}
+                        </span>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setStep(1)}
+                      style={{ marginTop: 8, background: "none", border: "none", cursor: "pointer", fontSize: "0.72rem", color: "var(--color-sidebar-text)", padding: 0, textDecoration: "underline" }}
+                    >
+                      Edit in Step 1
+                    </button>
                   </div>
-                </div>
+                )}
                 <div>
-                  <label className="block text-sm font-medium mb-2" style={{ color: "var(--color-input-text)" }}>Target Audience</label>
+                  <label className="block text-sm font-medium mb-2" style={{ color: "var(--color-input-text)" }}>Audience Details</label>
                   <div className="grid grid-cols-3 gap-4">
                     <input placeholder="Age Range (e.g. 25-45)" value={form.target_audience.age_range} onChange={(e) => update("target_audience", { ...form.target_audience, age_range: e.target.value })} className="field-input" />
                     <input placeholder="Gender" value={form.target_audience.gender} onChange={(e) => update("target_audience", { ...form.target_audience, gender: e.target.value })} className="field-input" />
@@ -904,27 +1068,33 @@ export default function CampaignCreator() {
             <div className="space-y-6">
 
               {/* Campaign Type */}
-              <SectionCard title="Campaign Type" subtitle="Select one or more. Voicebot and Chatbot require Website first.">
-                <div className="grid grid-cols-2 gap-3">
-                  {AD_TYPES.map((t) => {
-                    const Icon   = t.icon;
-                    const active = form.ad_types.includes(t.value);
-                    const locked = !!t.requiresWebsite && !websiteSelected;
-                    return (
-                      <div key={t.value} onClick={() => toggleAdType(t.value, locked)} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "14px 16px", borderRadius: "12px", border: `2px solid ${active ? "var(--color-accent)" : "var(--color-card-border)"}`, backgroundColor: active ? "var(--color-accent-subtle)" : "var(--color-card-bg)", opacity: locked ? 0.4 : 1, cursor: locked ? "not-allowed" : "pointer", transition: "border-color 0.15s, background-color 0.15s", userSelect: "none" }}>
-                        <Icon size={20} style={{ color: active ? "var(--color-accent)" : "var(--color-sidebar-text)", flexShrink: 0 }} />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                            <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--color-input-text)" }}>{t.label}</span>
-                            {locked && <span style={{ fontSize: "0.68rem", padding: "1px 5px", borderRadius: "4px", backgroundColor: "var(--color-btn-ghost-bg)", color: "var(--color-sidebar-text)" }}>needs Website</span>}
-                            {active && <span style={{ fontSize: "0.68rem", padding: "1px 5px", borderRadius: "4px", backgroundColor: "var(--color-accent-subtle)", color: "var(--color-accent-text)" }}>selected</span>}
-                          </div>
-                          <p style={{ fontSize: "0.72rem", marginTop: "2px", color: "var(--color-sidebar-text)" }}>{t.desc}</p>
-                        </div>
+              <SectionCard title="Campaign Type" actions={<button type="button" onClick={() => setStep(1)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-accent)", fontSize: "0.78rem", fontWeight: 600 }}>Edit</button>}>
+                {(() => {
+                  const allOpts = CAMPAIGN_GROUPS.flatMap(g => g.options);
+                  const selected = allOpts.find(o => o.value === form.campaign_category);
+                  const group    = CAMPAIGN_GROUPS.find(g => g.options.some(o => o.value === form.campaign_category));
+                  return selected ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-accent)", marginBottom: 2 }}>
+                        {group?.label}
+                      </p>
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                        <span style={{
+                          width: 18, height: 18, borderRadius: "50%",
+                          backgroundColor: "var(--color-accent)",
+                          display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                        }}>
+                          <Check size={11} strokeWidth={3} color="#fff" />
+                        </span>
+                        <span style={{ fontSize: "0.92rem", fontWeight: 600, color: "var(--color-input-text)" }}>
+                          {selected.label}
+                        </span>
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: "0.85rem", color: "var(--color-sidebar-text)", fontStyle: "italic" }}>Not selected</p>
+                  );
+                })()}
               </SectionCard>
 
               {/* Trial Details */}
@@ -966,19 +1136,26 @@ export default function CampaignCreator() {
                 />
               </SectionCard>
 
-              {/* Audience & Platforms */}
-              <SectionCard title="Audience & Platforms">
+              {/* Audience */}
+              <SectionCard title="Target Audience" actions={<button type="button" onClick={() => setStep(4)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-accent)", fontSize: "0.78rem", fontWeight: 600 }}>Edit</button>}>
                 <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2" style={{ color: "var(--color-input-text)" }}>Target Platforms</label>
-                    <div className="flex flex-wrap gap-2">
-                      {PLATFORMS.map((p) => (
-                        <button key={p} type="button" onClick={() => togglePlatform(p)} className={form.platforms.includes(p) ? "platform-pill--active" : "platform-pill"}>{p}</button>
-                      ))}
+                  {form.campaign_category === "smm" && form.social_platforms.length > 0 && (
+                    <div>
+                      <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)", marginBottom: 8 }}>Social Platforms</p>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {form.social_platforms.map(sp => (
+                          <span key={sp} style={{
+                            padding: "3px 10px", borderRadius: 999, fontSize: "0.78rem", fontWeight: 500,
+                            border: "1.5px solid var(--color-accent)",
+                            backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.12)",
+                            color: "var(--color-accent)",
+                          }}>{sp}</span>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
                   <div>
-                    <label className="block text-sm font-medium mb-2" style={{ color: "var(--color-input-text)" }}>Target Audience</label>
+                    <label className="block text-sm font-medium mb-2" style={{ color: "var(--color-input-text)" }}>Audience Details</label>
                     <div className="grid grid-cols-3 gap-4">
                       <input placeholder="Age Range (e.g. 25-45)" value={form.target_audience.age_range} onChange={(e) => update("target_audience", { ...form.target_audience, age_range: e.target.value })} className="field-input" />
                       <input placeholder="Gender" value={form.target_audience.gender} onChange={(e) => update("target_audience", { ...form.target_audience, gender: e.target.value })} className="field-input" />

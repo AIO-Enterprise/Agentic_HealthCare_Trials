@@ -13,6 +13,7 @@ import { useNavigate } from "react-router-dom";
 import {
   PageWithSidebar, SectionCard, MetricSummaryCard, CampaignStatusBadge,
 } from "../shared/Layout";
+import PreviewPanel from "../shared/PreviewPanel";
 import { adsAPI } from "../../services/api";
 import {
   Eye, CheckCircle, BarChart3, ClipboardList,
@@ -79,6 +80,8 @@ function Tag({ children }) {
 
 // ─── Main dashboard page ──────────────────────────────────────────────────────
 function DashboardPage({ loading, ads, reviewable, reviewed, onReview }) {
+  const [tab, setTab] = useState("queue"); // "queue" | "preview"
+
   return (
     <PageWithSidebar>
       <div className="page-header">
@@ -95,138 +98,150 @@ function DashboardPage({ loading, ads, reviewable, reviewed, onReview }) {
         <MetricSummaryCard label="Total Campaigns" value={loading ? "—" : ads.length}        icon={BarChart3} />
       </div>
 
-      {/* Review queue */}
-      <SectionCard
-        title="Review Queue"
-        subtitle={loading ? "Loading campaigns…" : `${reviewable.length} campaign${reviewable.length !== 1 ? "s" : ""} awaiting review`}
-      >
-        {loading ? (
-          // Skeleton rows while fetching
-          <div>
-            <div style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 180px 100px 110px",
-              padding: "8px 16px",
-              borderBottom: "1px solid var(--color-border, #e5e7eb)",
-            }}>
-              {["Campaign", "Platforms", "Budget", ""].map((h) => (
-                <span key={h} style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: "var(--color-sidebar-text)" }}>
-                  {h}
-                </span>
-              ))}
-            </div>
-            <SkeletonRow />
-            <SkeletonRow />
-            <SkeletonRow />
-          </div>
-        ) : reviewable.length === 0 ? (
-          <div className="empty-state">
-            <ClipboardList size={40} className="empty-state__icon" />
-            <p className="empty-state__text">No campaigns pending review</p>
-          </div>
-        ) : (
-          <div>
-            {/* Table header */}
-            <div style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 180px 100px 110px",
-              padding: "8px 16px",
-              borderBottom: "1px solid var(--color-border, #e5e7eb)",
-            }}>
-              {["Campaign", "Platforms", "Budget", ""].map((h) => (
-                <span key={h} style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: "var(--color-sidebar-text)" }}>
-                  {h}
-                </span>
-              ))}
-            </div>
+      {/* Tab navigation */}
+      <div className="flex gap-2 mb-6">
+        <button onClick={() => setTab("queue")}   className={tab === "queue"   ? "filter-tab--active" : "filter-tab"}>Review Queue</button>
+        <button onClick={() => setTab("preview")} className={tab === "preview" ? "filter-tab--active" : "filter-tab"}>Preview</button>
+      </div>
 
-            {/* Rows */}
-            {reviewable.map((ad) => (
-              <div
-                key={ad.id}
-                style={{
+      {/* Preview tab */}
+      {tab === "preview" && <PreviewPanel ads={ads} />}
+
+      {/* Review queue tab */}
+      {tab === "queue" && (
+        <>
+          <SectionCard
+            title="Review Queue"
+            subtitle={loading ? "Loading campaigns…" : `${reviewable.length} campaign${reviewable.length !== 1 ? "s" : ""} awaiting review`}
+          >
+            {loading ? (
+              <div>
+                <div style={{
                   display: "grid",
                   gridTemplateColumns: "1fr 180px 100px 110px",
-                  alignItems: "center",
-                  padding: "14px 16px",
+                  padding: "8px 16px",
                   borderBottom: "1px solid var(--color-border, #e5e7eb)",
-                  transition: "background 0.15s",
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = "var(--color-card-bg, #f9fafb)"}
-                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-              >
-                <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                    <p style={{ fontWeight: 600, fontSize: 14, color: "var(--color-input-text)" }}>{ad.title}</p>
-                    {needsQuestionnaire(ad) && (
-                      <span style={{
-                        display: "inline-flex", alignItems: "center", gap: "3px",
-                        fontSize: "0.65rem", fontWeight: 600, padding: "1px 6px",
-                        borderRadius: "999px",
-                        backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
-                        color: "var(--color-accent)",
-                        border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.25)",
-                      }}
-                        title="This campaign has a questionnaire"
-                      >
-                        <ClipboardList size={9} /> Questionnaire
-                      </span>
-                    )}
-                  </div>
-                  <p style={{ fontSize: 12, color: "var(--color-sidebar-text)", marginTop: 2 }}>
-                    {new Date(ad.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                    {needsQuestionnaire(ad) && (
-                      <span style={{ marginLeft: "6px", textTransform: "capitalize" }}>
-                        · {ad.campaign_category ? ad.campaign_category.replace("_", " ") : "hiring / recruitment"}
-                      </span>
-                    )}
-                  </p>
+                }}>
+                  {["Campaign", "Platforms", "Budget", ""].map((h) => (
+                    <span key={h} style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: "var(--color-sidebar-text)" }}>
+                      {h}
+                    </span>
+                  ))}
                 </div>
-                <div style={{ display: "flex", flexWrap: "wrap" }}>
-                  {ad.platforms?.map((p) => <Tag key={p}>{p}</Tag>)}
-                </div>
-                <p style={{ fontSize: 13, color: "var(--color-input-text)", fontWeight: 500 }}>
-                  ${ad.budget?.toLocaleString() || "N/A"}
-                </p>
-                <button
-                  onClick={() => onReview(ad)}
-                  className="btn--accent"
-                  style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}
-                >
-                  <Eye size={14} /> Review
-                </button>
+                <SkeletonRow />
+                <SkeletonRow />
+                <SkeletonRow />
               </div>
-            ))}
-          </div>
-        )}
-      </SectionCard>
+            ) : reviewable.length === 0 ? (
+              <div className="empty-state">
+                <ClipboardList size={40} className="empty-state__icon" />
+                <p className="empty-state__text">No campaigns pending review</p>
+              </div>
+            ) : (
+              <div>
+                {/* Table header */}
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 180px 100px 110px",
+                  padding: "8px 16px",
+                  borderBottom: "1px solid var(--color-border, #e5e7eb)",
+                }}>
+                  {["Campaign", "Platforms", "Budget", ""].map((h) => (
+                    <span key={h} style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: "var(--color-sidebar-text)" }}>
+                      {h}
+                    </span>
+                  ))}
+                </div>
 
-      {/* Reviewed campaigns — only shown once loaded and non-empty */}
-      {!loading && reviewed.length > 0 && (
-        <div style={{ marginTop: 24 }}>
-          <SectionCard title="Reviewed" subtitle={`${reviewed.length} completed`}>
-            {reviewed.map((ad) => (
-              <div
-                key={ad.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "12px 16px",
-                  borderBottom: "1px solid var(--color-border, #e5e7eb)",
-                }}
-              >
-                <div>
-                  <p style={{ fontWeight: 600, fontSize: 14, color: "var(--color-input-text)" }}>{ad.title}</p>
-                  <p style={{ fontSize: 12, color: "var(--color-sidebar-text)", marginTop: 2 }}>
-                    {ad.platforms?.join(" · ")}
-                  </p>
-                </div>
-                <CampaignStatusBadge status={ad.status} />
+                {/* Rows */}
+                {reviewable.map((ad) => (
+                  <div
+                    key={ad.id}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 180px 100px 110px",
+                      alignItems: "center",
+                      padding: "14px 16px",
+                      borderBottom: "1px solid var(--color-border, #e5e7eb)",
+                      transition: "background 0.15s",
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "var(--color-card-bg, #f9fafb)"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                  >
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                        <p style={{ fontWeight: 600, fontSize: 14, color: "var(--color-input-text)" }}>{ad.title}</p>
+                        {needsQuestionnaire(ad) && (
+                          <span style={{
+                            display: "inline-flex", alignItems: "center", gap: "3px",
+                            fontSize: "0.65rem", fontWeight: 600, padding: "1px 6px",
+                            borderRadius: "999px",
+                            backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
+                            color: "var(--color-accent)",
+                            border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.25)",
+                          }}
+                            title="This campaign has a questionnaire"
+                          >
+                            <ClipboardList size={9} /> Questionnaire
+                          </span>
+                        )}
+                      </div>
+                      <p style={{ fontSize: 12, color: "var(--color-sidebar-text)", marginTop: 2 }}>
+                        {new Date(ad.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                        {needsQuestionnaire(ad) && (
+                          <span style={{ marginLeft: "6px", textTransform: "capitalize" }}>
+                            · {ad.campaign_category ? ad.campaign_category.replace("_", " ") : "hiring / recruitment"}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap" }}>
+                      {ad.platforms?.map((p) => <Tag key={p}>{p}</Tag>)}
+                    </div>
+                    <p style={{ fontSize: 13, color: "var(--color-input-text)", fontWeight: 500 }}>
+                      ${ad.budget?.toLocaleString() || "N/A"}
+                    </p>
+                    <button
+                      onClick={() => onReview(ad)}
+                      className="btn--accent"
+                      style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}
+                    >
+                      <Eye size={14} /> Review
+                    </button>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </SectionCard>
-        </div>
+
+          {/* Reviewed campaigns */}
+          {!loading && reviewed.length > 0 && (
+            <div style={{ marginTop: 24 }}>
+              <SectionCard title="Reviewed" subtitle={`${reviewed.length} completed`}>
+                {reviewed.map((ad) => (
+                  <div
+                    key={ad.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "12px 16px",
+                      borderBottom: "1px solid var(--color-border, #e5e7eb)",
+                    }}
+                  >
+                    <div>
+                      <p style={{ fontWeight: 600, fontSize: 14, color: "var(--color-input-text)" }}>{ad.title}</p>
+                      <p style={{ fontSize: 12, color: "var(--color-sidebar-text)", marginTop: 2 }}>
+                        {ad.platforms?.join(" · ")}
+                      </p>
+                    </div>
+                    <CampaignStatusBadge status={ad.status} />
+                  </div>
+                ))}
+              </SectionCard>
+            </div>
+          )}
+        </>
       )}
     </PageWithSidebar>
   );

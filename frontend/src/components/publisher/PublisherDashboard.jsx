@@ -172,7 +172,6 @@ export default function PublisherDashboard() {
 
   // Overview state
   const [publishing,  setPublishing]  = useState(null);
-  const [generating,  setGenerating]  = useState(null);
   const [expandedId,  setExpandedId]  = useState(null);
   const [previewAd,   setPreviewAd]   = useState(null);
 
@@ -203,24 +202,6 @@ export default function PublisherDashboard() {
       setAds((p) => p.map((a) => (a.id === adId ? updated : a)));
     } catch (err) { alert(err.message); }
     finally { setPublishing(null); }
-  };
-
-  const handleGenerateCreatives = async (adId) => {
-    setGenerating({ id: adId, type: "creatives" });
-    try {
-      const updated = await adsAPI.generateCreatives(adId);
-      setAds((p) => p.map((a) => (a.id === adId ? updated : a)));
-    } catch (err) { alert(err.message); }
-    finally { setGenerating(null); }
-  };
-
-  const handleGenerateWebsite = async (adId) => {
-    setGenerating({ id: adId, type: "website" });
-    try {
-      const updated = await adsAPI.generateWebsite(adId);
-      setAds((p) => p.map((a) => (a.id === adId ? updated : a)));
-    } catch (err) { alert(err.message); }
-    finally { setGenerating(null); }
   };
 
   // ── Deploy handlers ──────────────────────────────────────────────────────
@@ -313,12 +294,9 @@ export default function PublisherDashboard() {
           approved={approved}
           published={published}
           publishing={publishing}
-          generating={generating}
           expandedId={expandedId}
           onToggle={(id) => setExpandedId((p) => (p === id ? null : id))}
           onPublish={handlePublish}
-          onGenerateCreatives={handleGenerateCreatives}
-          onGenerateWebsite={handleGenerateWebsite}
           onPreviewAd={setPreviewAd}
         />
       )}
@@ -327,14 +305,12 @@ export default function PublisherDashboard() {
       {activeTab === "deploy" && (
         <DeployTab
           ads={ads}
-          generating={generating}
           deployExpanded={deployExpanded}
           deployForms={deployForms}
           deployStatus={deployStatus}
           onSelectPlatform={handleDeploySelect}
           onUpdateForm={updateDeployForm}
           onDeploy={handleDeploy}
-          onGenerateWebsite={handleGenerateWebsite}
         />
       )}
 
@@ -342,14 +318,12 @@ export default function PublisherDashboard() {
       {activeTab === "distribute" && (
         <DistributeTab
           ads={ads}
-          generating={generating}
           distExpanded={distExpanded}
           distForms={distForms}
           distStatus={distStatus}
           onSelectPlatform={handleDistSelect}
           onUpdateForm={updateDistForm}
           onDistribute={handleDistribute}
-          onGenerateCreatives={handleGenerateCreatives}
           onPreviewAd={setPreviewAd}
         />
       )}
@@ -364,7 +338,7 @@ export default function PublisherDashboard() {
 }
 
 // ─── Overview Tab ─────────────────────────────────────────────────────────────
-function OverviewTab({ approved, published, publishing, generating, expandedId, onToggle, onPublish, onGenerateCreatives, onGenerateWebsite, onPreviewAd }) {
+function OverviewTab({ approved, published, publishing, expandedId, onToggle, onPublish, onPreviewAd }) {
   return (
     <div className="space-y-4">
       <SectionCard
@@ -385,9 +359,8 @@ function OverviewTab({ approved, published, publishing, generating, expandedId, 
             <CampaignRow
               key={ad.id} ad={ad}
               expanded={expandedId === ad.id} onToggle={() => onToggle(ad.id)}
-              publishing={publishing} generating={generating}
-              onPublish={onPublish} onGenerateCreatives={onGenerateCreatives}
-              onGenerateWebsite={onGenerateWebsite} onPreviewAd={onPreviewAd}
+              publishing={publishing}
+              onPublish={onPublish} onPreviewAd={onPreviewAd}
             />
           ))
         )}
@@ -404,9 +377,8 @@ function OverviewTab({ approved, published, publishing, generating, expandedId, 
             <CampaignRow
               key={ad.id} ad={ad}
               expanded={expandedId === ad.id} onToggle={() => onToggle(ad.id)}
-              publishing={publishing} generating={generating}
-              onPublish={onPublish} onGenerateCreatives={onGenerateCreatives}
-              onGenerateWebsite={onGenerateWebsite} onPreviewAd={onPreviewAd}
+              publishing={publishing}
+              onPublish={onPublish} onPreviewAd={onPreviewAd}
             />
           ))
         )}
@@ -415,7 +387,7 @@ function OverviewTab({ approved, published, publishing, generating, expandedId, 
   );
 }
 
-function CampaignRow({ ad, expanded, onToggle, publishing, generating, onPublish, onGenerateCreatives, onGenerateWebsite, onPreviewAd }) {
+function CampaignRow({ ad, expanded, onToggle, publishing, onPublish, onPreviewAd }) {
   const isLive = ad.status === "published";
   return (
     <div>
@@ -445,22 +417,15 @@ function CampaignRow({ ad, expanded, onToggle, publishing, generating, onPublish
         </div>
       </div>
       {expanded && (
-        <CampaignDetailPanel
-          ad={ad} generating={generating}
-          onGenerateCreatives={onGenerateCreatives}
-          onGenerateWebsite={onGenerateWebsite}
-          onPreviewAd={onPreviewAd}
-        />
+        <CampaignDetailPanel ad={ad} onPreviewAd={onPreviewAd} />
       )}
     </div>
   );
 }
 
-function CampaignDetailPanel({ ad, generating, onGenerateCreatives, onGenerateWebsite, onPreviewAd }) {
-  const isWebsite         = hasType(ad, "website");
-  const isAds             = hasType(ad, "ads");
-  const generatingWebsite   = generating?.id === ad.id && generating?.type === "website";
-  const generatingCreatives = generating?.id === ad.id && generating?.type === "creatives";
+function CampaignDetailPanel({ ad, onPreviewAd }) {
+  const isWebsite = hasType(ad, "website");
+  const isAds     = hasType(ad, "ads");
 
   return (
     <div className="pub-campaign-detail">
@@ -476,17 +441,9 @@ function CampaignDetailPanel({ ad, generating, onGenerateCreatives, onGenerateWe
               <a href={adsAPI.websiteDownloadUrl(ad.id)} className="btn--inline-action--ghost">
                 <Download size={11} /> Download HTML
               </a>
-              <button className="btn--inline-action--ghost" disabled={generatingWebsite} onClick={() => onGenerateWebsite(ad.id)}>
-                {generatingWebsite ? <><div className="spinner" style={{ width: 10, height: 10 }} /> Generating…</> : "Regenerate"}
-              </button>
             </div>
           ) : (
-            <div className="flex items-center gap-3">
-              <p className="text-xs flex-1" style={{ color: "var(--color-sidebar-text)" }}>Website not generated yet</p>
-              <button className="btn--inline-action--success" disabled={generatingWebsite} onClick={() => onGenerateWebsite(ad.id)}>
-                {generatingWebsite ? <><div className="spinner" style={{ width: 10, height: 10 }} /> Generating…</> : <><Zap size={12} /> Generate Website</>}
-              </button>
-            </div>
+            <p className="text-xs" style={{ color: "var(--color-sidebar-text)" }}>Website not yet generated</p>
           )}
         </div>
       )}
@@ -499,17 +456,9 @@ function CampaignDetailPanel({ ad, generating, onGenerateCreatives, onGenerateWe
               <button className="btn--inline-action--accent" onClick={() => onPreviewAd(ad)}>
                 <Eye size={11} /> Preview
               </button>
-              <button className="btn--inline-action--ghost" disabled={generatingCreatives} onClick={() => onGenerateCreatives(ad.id)}>
-                {generatingCreatives ? <><div className="spinner" style={{ width: 10, height: 10 }} /> Generating…</> : "Regenerate"}
-              </button>
             </div>
           ) : (
-            <div className="flex items-center gap-3">
-              <p className="text-xs flex-1" style={{ color: "var(--color-sidebar-text)" }}>Ad creatives not generated yet</p>
-              <button className="btn--inline-action--accent" disabled={generatingCreatives} onClick={() => onGenerateCreatives(ad.id)}>
-                {generatingCreatives ? <><div className="spinner" style={{ width: 10, height: 10 }} /> Generating…</> : <><Zap size={12} /> Generate Creatives</>}
-              </button>
-            </div>
+            <p className="text-xs" style={{ color: "var(--color-sidebar-text)" }}>Ad creatives not yet generated</p>
           )}
         </div>
       )}
@@ -881,7 +830,7 @@ function VoicebotConfig({ ad }) {
 }
 
 // ─── Deploy Tab ───────────────────────────────────────────────────────────────
-function DeployTab({ ads, generating, deployExpanded, deployForms, deployStatus, onSelectPlatform, onUpdateForm, onDeploy, onGenerateWebsite }) {
+function DeployTab({ ads, deployExpanded, deployForms, deployStatus, onSelectPlatform, onUpdateForm, onDeploy }) {
   const deployable = ads.filter(
     (a) => (a.status === "approved" || a.status === "published") && hasType(a, "website")
   );
@@ -922,15 +871,6 @@ function DeployTab({ ads, generating, deployExpanded, deployForms, deployStatus,
               <a href={adsAPI.websiteDownloadUrl(ad.id)} className="btn--inline-action--ghost">
                 <Download size={11} /> Download
               </a>
-              <button
-                className="btn--inline-action--ghost"
-                disabled={generating?.id === ad.id && generating?.type === "website"}
-                onClick={() => onGenerateWebsite(ad.id)}
-              >
-                {generating?.id === ad.id && generating?.type === "website"
-                  ? <><div className="spinner" style={{ width: 10, height: 10 }} /> Generating…</>
-                  : "Regenerate"}
-              </button>
             </div>
           ) : (
             <div style={{
@@ -940,17 +880,8 @@ function DeployTab({ ads, generating, deployExpanded, deployForms, deployStatus,
             }}>
               <AlertCircle size={14} style={{ color: "var(--color-sidebar-text)", flexShrink: 0 }} />
               <p style={{ fontSize: "0.82rem", color: "var(--color-sidebar-text)", flex: 1 }}>
-                Website not generated yet — go to Overview to generate it first
+                Website not yet generated — the Study Coordinator generates assets during campaign creation
               </p>
-              <button
-                className="btn--inline-action--accent"
-                disabled={generating?.id === ad.id && generating?.type === "website"}
-                onClick={() => onGenerateWebsite(ad.id)}
-              >
-                {generating?.id === ad.id && generating?.type === "website"
-                  ? <><div className="spinner" style={{ width: 10, height: 10 }} /> Generating…</>
-                  : <><Zap size={11} /> Generate Website</>}
-              </button>
             </div>
           )}
 
@@ -1099,7 +1030,7 @@ function DeployConfigForm({ platform, formData, status, onChange, onDeploy }) {
 }
 
 // ─── Distribute Tab ───────────────────────────────────────────────────────────
-function DistributeTab({ ads, generating, distExpanded, distForms, distStatus, onSelectPlatform, onUpdateForm, onDistribute, onGenerateCreatives, onPreviewAd }) {
+function DistributeTab({ ads, distExpanded, distForms, distStatus, onSelectPlatform, onUpdateForm, onDistribute, onPreviewAd }) {
   const distributable = ads.filter(
     (a) => (a.status === "approved" || a.status === "published") && a.output_files?.length > 0
   );
@@ -1136,15 +1067,6 @@ function DistributeTab({ ads, generating, distExpanded, distForms, distStatus, o
               </p>
               <button className="btn--inline-action--ghost" onClick={() => onPreviewAd(ad)}>
                 <Eye size={11} /> Preview All
-              </button>
-              <button
-                className="btn--inline-action--ghost"
-                disabled={generating?.id === ad.id && generating?.type === "creatives"}
-                onClick={() => onGenerateCreatives(ad.id)}
-              >
-                {generating?.id === ad.id && generating?.type === "creatives"
-                  ? <><div className="spinner" style={{ width: 10, height: 10 }} /> Generating…</>
-                  : "Regenerate"}
               </button>
             </div>
 

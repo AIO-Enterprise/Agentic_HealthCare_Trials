@@ -20,7 +20,6 @@ from openai import AzureOpenAI, OpenAI
 from app.models.models import Advertisement
 from app.core.bedrock import get_async_client, get_model, is_configured
 from app.core.config import settings
-from app.services.ai.compositor import composite_ad
 
 
 def _get_image_client():
@@ -158,19 +157,25 @@ Budget: {ad.budget or 'unspecified'}
 Generate one creative brief per format listed in the ad specifications.
 If no formats are defined, generate three 1080x1920 Meta Story Ads — each a distinct creative with different hook, mood, and photo concept."""
 
-        response = await client.messages.create(
-            model=get_model(),
-            max_tokens=3000,
-            system=_CREATIVE_SYSTEM,
-            messages=[{"role": "user", "content": user_msg}],
-        )
-        text = response.content[0].text.strip()
         try:
+            response = await client.messages.create(
+                model=get_model(),
+                max_tokens=3000,
+                system=_CREATIVE_SYSTEM,
+                messages=[{"role": "user", "content": user_msg}],
+            )
+            text = response.content[0].text.strip()
             return json.loads(text.removeprefix("```json").removesuffix("```").strip())
         except json.JSONDecodeError:
             import logging
             logging.getLogger(__name__).warning(
                 "Creative brief JSON parse failed for ad %s — using mock", ad.id
+            )
+            return self._mock_brief(ad)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error(
+                "Claude brief generation failed for ad %s: %s", ad.id, exc
             )
             return self._mock_brief(ad)
 
@@ -194,8 +199,11 @@ If no formats are defined, generate three 1080x1920 Meta Story Ads — each a di
         import logging
         log = logging.getLogger(__name__)
 
+        import logging
+        log = logging.getLogger(__name__)
+
+        # Step 2: GPT-image-1 → raw scene photo
         try:
-            # Step 2: GPT-image-1 → raw scene photo
             client = _get_image_client()
             size   = self._get_openai_size(format_name)
 
@@ -212,28 +220,34 @@ If no formats are defined, generate three 1080x1920 Meta Story Ads — each a di
                 n=1,
                 output_format="png",
             )
-            # gpt-image-1 returns base64 in b64_json regardless of client type
             photo_bytes = base64.b64decode(response.data[0].b64_json)
+            log.info("GPT image generated [format=%s, ad=%s]", format_name, ad_id)
+        except Exception as exc:
+            log.error("GPT image generation failed [format=%s, ad=%s]: %s", format_name, ad_id, exc)
+            return None
 
-            # Step 3: Compositor → overlay text design
+        # Step 3: Compositor → overlay text design
+        try:
+            from app.services.ai.compositor import composite_ad
             canvas_w, canvas_h = self._get_canvas_dimensions(format_name)
             final_png = composite_ad(photo_bytes, layout, canvas_w, canvas_h)
+        except ImportError:
+            log.error("Pillow not installed — skipping compositor. Run: pip install Pillow>=10.0.0")
+            final_png = photo_bytes  # fall back to raw photo
+        except Exception as exc:
+            log.error("Compositor failed [format=%s, ad=%s]: %s", format_name, ad_id, exc)
+            final_png = photo_bytes  # fall back to raw photo
 
-            # Save
+        # Save final PNG
+        try:
             safe_fmt  = format_name.replace(" ", "_").replace("/", "-").replace(":", "-").lower()
             filename  = f"creative_{index}_{safe_fmt}.png"
             file_path = os.path.join(output_dir, filename)
             with open(file_path, "wb") as f:
                 f.write(final_png)
-
             return f"/outputs/{self.company_id}/{ad_id}/{filename}"
-
         except Exception as exc:
-            import logging
-            logging.getLogger(__name__).error(
-                "Creative generation failed [format=%s, ad=%s]: %s",
-                format_name, ad_id, exc,
-            )
+            log.error("Failed to save creative [format=%s, ad=%s]: %s", format_name, ad_id, exc)
             return None
 
     def _get_openai_size(self, format_name: str) -> str:

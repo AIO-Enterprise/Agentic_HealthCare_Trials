@@ -502,18 +502,20 @@ async def generate_creatives(
         )
 
     from app.services.ai.creative import CreativeService
+    from sqlalchemy.orm.attributes import flag_modified
+
     svc = CreativeService(company_id=user.company_id)
     try:
         creatives = await svc.generate_creatives(ad)
+        ad.output_files = creatives
+        flag_modified(ad, "output_files")
+        await db.commit()
+        await db.refresh(ad)
     except Exception as exc:
         logger.error("Creative generation failed for ad %s: %s", ad_id, exc, exc_info=True)
+        await db.rollback()
         raise HTTPException(status_code=500, detail=f"Creative generation failed: {exc}")
 
-    from sqlalchemy.orm.attributes import flag_modified
-    ad.output_files = creatives
-    flag_modified(ad, "output_files")
-    await db.commit()
-    await db.refresh(ad)
     return ad
 
 

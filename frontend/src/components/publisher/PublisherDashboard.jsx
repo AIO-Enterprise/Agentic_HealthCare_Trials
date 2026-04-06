@@ -79,66 +79,44 @@ const DEPLOY_PLATFORMS = [
 ];
 
 // ─── Social distribution platform definitions ────────────────────────────────
+// Only Meta/Instagram is active. Other platforms are shown as "Coming soon".
 const SOCIAL_PLATFORMS = {
-  "Google Ads": {
-    id: "google_ads",
-    fields: [
-      { key: "customer_id",      label: "Customer ID",      type: "text",     placeholder: "123-456-7890" },
-      { key: "developer_token",  label: "Developer Token",  type: "password", placeholder: "" },
-      { key: "campaign_name",    label: "Campaign Name",    type: "text",     placeholder: "Q2 Launch" },
-    ],
-  },
   "Meta/Instagram": {
     id: "meta",
+    active: true,
     fields: [
-      { key: "access_token",  label: "Access Token",  type: "password", placeholder: "EAA…" },
-      { key: "ad_account_id", label: "Ad Account ID", type: "text",     placeholder: "act_…" },
-      { key: "caption",       label: "Caption",       type: "textarea", placeholder: "Discover our latest…" },
-      { key: "hashtags",      label: "Hashtags",      type: "text",     placeholder: "#brand #campaign" },
+      { key: "access_token",        label: "Access Token",            type: "password", placeholder: "EAA…",            required: true  },
+      { key: "ad_account_id",       label: "Ad Account ID",           type: "text",     placeholder: "act_…",           required: true  },
+      { key: "page_id",             label: "Facebook Page ID",        type: "text",     placeholder: "123456789",       required: true  },
+      { key: "destination_url",     label: "Destination URL",         type: "text",     placeholder: "https://…",       required: true  },
+      { key: "daily_budget",        label: "Daily Budget (USD)",      type: "text",     placeholder: "10.00",           required: true  },
+      { key: "targeting_countries", label: "Target Countries",        type: "text",     placeholder: "US, GB, CA",      required: false },
     ],
   },
-  "YouTube": {
-    id: "youtube",
-    fields: [
-      { key: "api_key",     label: "YouTube API Key", type: "password", placeholder: "AIza…" },
-      { key: "channel_id",  label: "Channel ID",      type: "text",     placeholder: "UC…" },
-      { key: "title",       label: "Ad Title",        type: "text",     placeholder: "Campaign Title" },
-      { key: "description", label: "Description",     type: "textarea", placeholder: "" },
-    ],
+  "Google Ads": {
+    id: "google_ads",
+    active: false,
+    fields: [],
   },
   "LinkedIn": {
     id: "linkedin",
-    fields: [
-      { key: "access_token",    label: "Access Token",    type: "password", placeholder: "" },
-      { key: "organization_id", label: "Organization URN", type: "text",    placeholder: "urn:li:organization:…" },
-      { key: "caption",         label: "Post Caption",    type: "textarea", placeholder: "" },
-    ],
+    active: false,
+    fields: [],
+  },
+  "YouTube": {
+    id: "youtube",
+    active: false,
+    fields: [],
   },
   "Twitter/X": {
     id: "twitter",
-    fields: [
-      { key: "api_key",      label: "API Key",      type: "password", placeholder: "" },
-      { key: "api_secret",   label: "API Secret",   type: "password", placeholder: "" },
-      { key: "access_token", label: "Access Token", type: "password", placeholder: "" },
-      { key: "tweet_text",   label: "Tweet Text",   type: "textarea", placeholder: "Check out our latest…" },
-    ],
+    active: false,
+    fields: [],
   },
   "TikTok": {
     id: "tiktok",
-    fields: [
-      { key: "access_token",  label: "Access Token",  type: "password", placeholder: "" },
-      { key: "advertiser_id", label: "Advertiser ID", type: "text",     placeholder: "" },
-    ],
-  },
-  "Email": {
-    id: "email",
-    fields: [
-      { key: "smtp_host",       label: "SMTP Host",                     type: "text",     placeholder: "smtp.gmail.com" },
-      { key: "smtp_port",       label: "Port",                          type: "text",     placeholder: "587" },
-      { key: "from_email",      label: "From Email",                    type: "text",     placeholder: "hello@company.com" },
-      { key: "subject",         label: "Email Subject",                 type: "text",     placeholder: "Campaign Launch!" },
-      { key: "recipient_list",  label: "Recipients (comma-separated)",  type: "textarea", placeholder: "user@example.com, …" },
-    ],
+    active: false,
+    fields: [],
   },
 };
 
@@ -232,23 +210,22 @@ export default function PublisherDashboard() {
 
   // ── Distribute handlers ──────────────────────────────────────────────────
   const handleDistSelect = (adId, platformId) => {
+    // Block inactive platforms
+    const entry = Object.entries(SOCIAL_PLATFORMS).find(([, cfg]) => cfg.id === platformId);
+    if (!entry || !entry[1].active) return;
+
     const isOpen = distExpanded?.adId === adId && distExpanded?.platformId === platformId;
     if (!isOpen) {
-      // Seed form with AI suggestions from strategy_json when opening
+      // Seed destination_url from the campaign's hosted landing page (if generated)
       const ad = ads.find((a) => a.id === adId);
-      const platformName = Object.entries(SOCIAL_PLATFORMS).find(([, cfg]) => cfg.id === platformId)?.[0];
-      const suggestion = ad?.strategy_json?.social_content?.[platformName];
-      if (suggestion) {
+      if (ad?.hosted_url) {
         const fk = `${adId}_${platformId}`;
         setDistForms((p) => {
           const existing = p[fk] || {};
-          // Only seed fields that are still empty so manual edits aren't overwritten
-          const seeded = { ...existing };
-          if (!seeded.caption      && suggestion.caption)   seeded.caption      = suggestion.caption;
-          if (!seeded.hashtags     && suggestion.hashtags)  seeded.hashtags     = suggestion.hashtags;
-          if (!seeded.tweet_text   && suggestion.caption)   seeded.tweet_text   = suggestion.caption;
-          if (!seeded.description  && suggestion.caption)   seeded.description  = suggestion.caption;
-          return { ...p, [fk]: seeded };
+          if (!existing.destination_url) {
+            return { ...p, [fk]: { ...existing, destination_url: ad.hosted_url } };
+          }
+          return p;
         });
       }
     }
@@ -264,8 +241,8 @@ export default function PublisherDashboard() {
     const fk = `${adId}_${platformConfig.id}`;
     setDistStatus((p) => ({ ...p, [fk]: { status: "posting" } }));
     try {
-      await adsAPI.distributeCreatives(adId, { platform: platformConfig.id, config: distForms[fk] || {} });
-      setDistStatus((p) => ({ ...p, [fk]: { status: "posted" } }));
+      const result = await adsAPI.distributeCreatives(adId, { platform: platformConfig.id, config: distForms[fk] || {} });
+      setDistStatus((p) => ({ ...p, [fk]: { status: "posted", result } }));
     } catch (err) {
       setDistStatus((p) => ({ ...p, [fk]: { status: "error", error: err.message } }));
     }
@@ -1200,7 +1177,6 @@ function DistributeTab({ ads, distExpanded, distForms, distStatus, onSelectPlatf
     <div className="space-y-4">
       {distributable.map((ad) => {
         const campaignPlatforms = (ad.platforms || []).filter((p) => SOCIAL_PLATFORMS[p]);
-        const otherPlatforms    = Object.keys(SOCIAL_PLATFORMS).filter((p) => !campaignPlatforms.includes(p));
 
         return (
           <SectionCard
@@ -1246,51 +1222,27 @@ function DistributeTab({ ads, distExpanded, distForms, distStatus, onSelectPlatf
             </div>
 
             {/* Campaign's own platforms */}
-            {campaignPlatforms.length > 0 && (
-              <>
-                <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)", marginBottom: "10px" }}>
-                  Campaign Platforms
-                </p>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "8px", marginBottom: "16px" }}>
-                  {campaignPlatforms.map((name) => {
-                    const cfg = SOCIAL_PLATFORMS[name];
-                    const isSelected = distExpanded?.adId === ad.id && distExpanded?.platformId === cfg.id;
-                    return (
-                      <DistributePlatformTile
-                        key={name} platformName={name}
-                        selected={isSelected}
-                        status={distStatus[`${ad.id}_${cfg.id}`]}
-                        onClick={() => onSelectPlatform(ad.id, cfg.id)}
-                      />
-                    );
-                  })}
-                </div>
-              </>
-            )}
-
-            {/* Other available platforms */}
-            {otherPlatforms.length > 0 && (
-              <>
-                <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)", marginBottom: "10px" }}>
-                  Other Platforms
-                </p>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "8px", marginBottom: "16px" }}>
-                  {otherPlatforms.map((name) => {
-                    const cfg = SOCIAL_PLATFORMS[name];
-                    const isSelected = distExpanded?.adId === ad.id && distExpanded?.platformId === cfg.id;
-                    return (
-                      <DistributePlatformTile
-                        key={name} platformName={name}
-                        selected={isSelected}
-                        status={distStatus[`${ad.id}_${cfg.id}`]}
-                        dim
-                        onClick={() => onSelectPlatform(ad.id, cfg.id)}
-                      />
-                    );
-                  })}
-                </div>
-              </>
-            )}
+            {/* All platforms — campaign platforms first, then the rest */}
+            <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)", marginBottom: "10px" }}>
+              Distribute to
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "8px", marginBottom: "16px" }}>
+              {Object.entries(SOCIAL_PLATFORMS).map(([name, cfg]) => {
+                const isSelected = distExpanded?.adId === ad.id && distExpanded?.platformId === cfg.id;
+                const isCampaignPlatform = campaignPlatforms.includes(name);
+                return (
+                  <DistributePlatformTile
+                    key={name}
+                    platformName={name}
+                    selected={isSelected}
+                    status={distStatus[`${ad.id}_${cfg.id}`]}
+                    dim={!isCampaignPlatform && cfg.active}
+                    active={cfg.active}
+                    onClick={() => onSelectPlatform(ad.id, cfg.id)}
+                  />
+                );
+              })}
+            </div>
 
             {/* Inline post form */}
             {distExpanded?.adId === ad.id && (() => {
@@ -1305,7 +1257,6 @@ function DistributeTab({ ads, distExpanded, distForms, distStatus, onSelectPlatf
                   formData={distForms[fk] || {}}
                   status={distStatus[fk]}
                   creatives={ad.output_files}
-                  aiSuggestions={ad.strategy_json?.social_content?.[platformName]}
                   onChange={(key, val) => onUpdateForm(ad.id, platformConfig.id, key, val)}
                   onPost={() => onDistribute(ad.id, platformConfig)}
                 />
@@ -1318,11 +1269,12 @@ function DistributeTab({ ads, distExpanded, distForms, distStatus, onSelectPlatf
   );
 }
 
-function DistributePlatformTile({ platformName, selected, status, dim, onClick }) {
+function DistributePlatformTile({ platformName, selected, status, dim, onClick, active = true }) {
   const isPosted = status?.status === "posted";
   return (
     <button
-      onClick={onClick}
+      onClick={active ? onClick : undefined}
+      title={active ? undefined : "Coming soon"}
       style={{
         display: "flex", flexDirection: "column", gap: "3px",
         padding: "10px 12px", borderRadius: "10px", textAlign: "left",
@@ -1330,26 +1282,29 @@ function DistributePlatformTile({ platformName, selected, status, dim, onClick }
         backgroundColor: selected
           ? "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.06)"
           : isPosted ? "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.05)" : "var(--color-card-bg)",
-        cursor: "pointer",
-        opacity: dim && !selected ? 0.55 : 1,
+        cursor: active ? "pointer" : "not-allowed",
+        opacity: !active ? 0.35 : dim && !selected ? 0.55 : 1,
         transition: "border-color 0.15s, background-color 0.15s",
+        position: "relative",
       }}
     >
       <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--color-input-text)" }}>
         {platformName}{isPosted && " ✓"}
       </span>
       {isPosted && <span style={{ fontSize: "0.68rem", color: "var(--color-accent)" }}>Posted</span>}
+      {!active && (
+        <span style={{ fontSize: "0.62rem", color: "var(--color-muted)", fontStyle: "italic" }}>
+          Coming soon
+        </span>
+      )}
     </button>
   );
 }
 
-function DistributeForm({ platformName, platformConfig, formData, status, creatives, aiSuggestions, onChange, onPost }) {
+function DistributeForm({ platformName, platformConfig, formData, status, creatives, onChange, onPost }) {
   const isPosting = status?.status === "posting";
   const isPosted  = status?.status === "posted";
   const isError   = status?.status === "error";
-
-  // Fields that were seeded from AI suggestions
-  const AI_SEEDED_KEYS = new Set(["caption", "hashtags", "tweet_text", "description"]);
 
   const inputStyle = {
     width: "100%", padding: "8px 12px", borderRadius: "8px", fontSize: "0.83rem",
@@ -1361,13 +1316,12 @@ function DistributeForm({ platformName, platformConfig, formData, status, creati
     display: "block", marginBottom: "5px",
   };
 
-  const aiPill = (
+  const requiredPill = (
     <span style={{
-      fontSize: "0.6rem", fontWeight: 700, padding: "1px 7px", borderRadius: 999,
-      backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.12)",
-      color: "var(--color-accent)", marginLeft: 6, verticalAlign: "middle",
-      letterSpacing: "0.06em", textTransform: "uppercase",
-    }}>AI Suggested</span>
+      fontSize: "0.6rem", fontWeight: 700, padding: "1px 6px", borderRadius: 999,
+      backgroundColor: "rgba(239,68,68,0.1)", color: "#ef4444",
+      marginLeft: 5, verticalAlign: "middle", letterSpacing: "0.05em",
+    }}>required</span>
   );
 
   return (
@@ -1375,86 +1329,43 @@ function DistributeForm({ platformName, platformConfig, formData, status, creati
       padding: "20px", borderRadius: "12px",
       border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)",
     }}>
-      <p style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--color-input-text)", marginBottom: "16px" }}>
-        Post to {platformName}
+      <p style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--color-input-text)", marginBottom: "4px" }}>
+        Publish to {platformName} via Marketing API
+      </p>
+      <p style={{ fontSize: "0.75rem", color: "var(--color-muted)", marginBottom: "16px" }}>
+        Ads are created in <strong>PAUSED</strong> state — review and activate them in Meta Ads Manager.
       </p>
 
-      {/* AI Launch Schedule Recommendation */}
-      {aiSuggestions?.launch_schedule && (
-        <div style={{
-          display: "flex", gap: 10, padding: "10px 14px", borderRadius: 10, marginBottom: 16,
-          backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.06)",
-          border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.2)",
-        }}>
-          <Sparkles size={14} style={{ color: "var(--color-accent)", flexShrink: 0, marginTop: 1 }} />
-          <div>
-            <p style={{ fontSize: "0.68rem", fontWeight: 800, color: "var(--color-accent)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 3 }}>
-              AI Recommended Launch Window
-            </p>
-            <p style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--color-input-text)", margin: "0 0 2px" }}>
-              {[aiSuggestions.launch_schedule.recommended_window, aiSuggestions.launch_schedule.best_days, aiSuggestions.launch_schedule.best_time].filter(Boolean).join(" · ")}
-            </p>
-            {aiSuggestions.launch_schedule.rationale && (
-              <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", margin: 0, fontStyle: "italic" }}>
-                {aiSuggestions.launch_schedule.rationale}
-              </p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "12px", marginBottom: "16px" }}>
+        {platformConfig.fields.map((field) => (
+          <div key={field.key} style={field.type === "textarea" ? { gridColumn: "1 / -1" } : {}}>
+            <label style={labelStyle}>
+              {field.label}
+              {field.required && requiredPill}
+            </label>
+            {field.type === "textarea" ? (
+              <textarea
+                style={{ ...inputStyle, resize: "vertical", minHeight: "72px" }}
+                placeholder={field.placeholder || ""}
+                value={formData[field.key] || ""}
+                onChange={(e) => onChange(field.key, e.target.value)}
+              />
+            ) : (
+              <input
+                type={field.type}
+                style={inputStyle}
+                placeholder={field.placeholder || ""}
+                value={formData[field.key] || ""}
+                onChange={(e) => onChange(field.key, e.target.value)}
+              />
             )}
           </div>
-        </div>
-      )}
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "12px", marginBottom: "16px" }}>
-        {platformConfig.fields.map((field) => {
-          const isAiField = AI_SEEDED_KEYS.has(field.key) && aiSuggestions && (field.key === "caption" ? aiSuggestions.caption : field.key === "hashtags" ? aiSuggestions.hashtags : aiSuggestions.caption);
-          return (
-            <div key={field.key} style={field.type === "textarea" ? { gridColumn: "1 / -1" } : {}}>
-              <label style={labelStyle}>
-                {field.label}
-                {isAiField && aiPill}
-              </label>
-              {field.type === "textarea" ? (
-                <textarea
-                  style={{ ...inputStyle, resize: "vertical", minHeight: "72px" }}
-                  placeholder={field.placeholder || ""}
-                  value={formData[field.key] || ""}
-                  onChange={(e) => onChange(field.key, e.target.value)}
-                />
-              ) : (
-                <input
-                  type={field.type}
-                  style={inputStyle}
-                  placeholder={field.placeholder || ""}
-                  value={formData[field.key] || ""}
-                  onChange={(e) => onChange(field.key, e.target.value)}
-                />
-              )}
-            </div>
-          );
-        })}
-
-        {/* Schedule field — common to all platforms */}
-        <div>
-          <label style={labelStyle}>
-            Schedule (optional)
-            {aiSuggestions?.launch_schedule && aiPill}
-          </label>
-          <input
-            type="datetime-local"
-            style={inputStyle}
-            value={formData.schedule_at || ""}
-            onChange={(e) => onChange("schedule_at", e.target.value)}
-          />
-          {aiSuggestions?.launch_schedule?.recommended_window && !formData.schedule_at && (
-            <p style={{ fontSize: "0.68rem", color: "var(--color-sidebar-text)", marginTop: 4, fontStyle: "italic" }}>
-              Recommended: {aiSuggestions.launch_schedule.recommended_window}
-            </p>
-          )}
-        </div>
+        ))}
       </div>
 
       {/* Creative selector */}
       <div style={{ marginBottom: "16px" }}>
-        <label style={labelStyle}>Select Creatives to Post</label>
+        <label style={labelStyle}>Select Creatives to Publish</label>
         <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
           {creatives.map((c, i) => {
             const sel = (formData.selected_creatives || []).includes(i);
@@ -1466,6 +1377,7 @@ function DistributeForm({ platformName, platformConfig, formData, status, creati
                   const updated = sel ? cur.filter((x) => x !== i) : [...cur, i];
                   onChange("selected_creatives", updated);
                 }}
+                title={c.headline || `Creative ${i + 1}`}
                 style={{
                   width: "60px", height: "45px", borderRadius: "6px", flexShrink: 0,
                   border: `2px solid ${sel ? "var(--color-accent)" : "var(--color-card-border)"}`,
@@ -1483,6 +1395,11 @@ function DistributeForm({ platformName, platformConfig, formData, status, creati
             );
           })}
         </div>
+        {creatives.length > 0 && !(formData.selected_creatives?.length) && (
+          <p style={{ fontSize: "0.68rem", color: "var(--color-muted)", marginTop: 4 }}>
+            No creatives selected — the first creative will be used.
+          </p>
+        )}
       </div>
 
       {isError && (
@@ -1492,14 +1409,27 @@ function DistributeForm({ platformName, platformConfig, formData, status, creati
         </div>
       )}
 
-      {isPosted && (
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 12px", borderRadius: "8px", backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.08)", border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.3)", marginBottom: "12px" }}>
-          <CheckCircle2 size={14} style={{ color: "var(--color-accent)", flexShrink: 0 }} />
-          <p style={{ fontSize: "0.82rem", color: "var(--color-accent)" }}>
-            {formData.schedule_at
-              ? `Scheduled for ${new Date(formData.schedule_at).toLocaleString()}`
-              : "Posted successfully"}
-          </p>
+      {isPosted && status?.result && (
+        <div style={{ padding: "12px 14px", borderRadius: "10px", backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.06)", border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.25)", marginBottom: "12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
+            <CheckCircle2 size={14} style={{ color: "var(--color-accent)", flexShrink: 0 }} />
+            <p style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--color-accent)" }}>
+              Campaign created on Meta — ads are PAUSED pending your review
+            </p>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.75rem", color: "var(--color-muted)", marginBottom: 10 }}>
+            <span>Campaign ID: <code style={{ fontFamily: "monospace" }}>{status.result.campaign_id}</code></span>
+            <span>Ad Set ID: <code style={{ fontFamily: "monospace" }}>{status.result.adset_id}</code></span>
+            <span>Ads created: {status.result.ad_ids?.length ?? 0}</span>
+          </div>
+          <a
+            href={status.result.ads_manager_url}
+            target="_blank" rel="noreferrer"
+            className="btn--inline-action--success"
+            style={{ fontSize: "0.8rem" }}
+          >
+            <ExternalLink size={11} /> Open in Meta Ads Manager
+          </a>
         </div>
       )}
 
@@ -1512,11 +1442,7 @@ function DistributeForm({ platformName, platformConfig, formData, status, creati
         {isPosting
           ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
           : <Share2 size={14} />}
-        {isPosting
-          ? "Posting…"
-          : formData.schedule_at
-            ? "Schedule Post"
-            : isPosted ? "Repost" : `Post to ${platformName}`}
+        {isPosting ? "Publishing to Meta…" : isPosted ? "Republish" : `Publish to ${platformName}`}
       </button>
     </div>
   );

@@ -34,10 +34,19 @@ def _get_image_client():
 
 
 def _image_generation_enabled() -> bool:
-    return bool(
+    enabled = bool(
         (settings.AZURE_OPENAI_ENDPOINT and settings.AZURE_OPENAI_API_KEY)
         or settings.OPENAI_API_KEY
     )
+    import logging
+    logging.getLogger(__name__).info(
+        "Image generation enabled=%s | AZURE_ENDPOINT=%s | AZURE_KEY=%s | OPENAI_KEY=%s",
+        enabled,
+        bool(settings.AZURE_OPENAI_ENDPOINT),
+        bool(settings.AZURE_OPENAI_API_KEY),
+        bool(settings.OPENAI_API_KEY),
+    )
+    return enabled
 
 
 # ── Claude system prompt ──────────────────────────────────────────────────────

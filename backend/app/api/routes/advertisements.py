@@ -948,7 +948,10 @@ async def update_bot_config(
     if not ad:
         raise HTTPException(status_code=404, detail="Advertisement not found")
 
-    ad.bot_config = body.model_dump(exclude_unset=True)
+    merged = dict(ad.bot_config or {})
+    merged.update(body.model_dump(exclude_unset=True))
+    ad.bot_config = merged
+    await db.commit()
     return ad
 
 

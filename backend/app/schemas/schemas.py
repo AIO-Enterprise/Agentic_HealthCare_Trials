@@ -336,11 +336,11 @@ class SkillOut(BaseModel):
 # ─── Bot Config Schemas ──────────────────────────────────────────────────────
 
 class BotConfigUpdate(BaseModel):
-    name: Optional[str] = None
-    welcome_message: Optional[str] = None
+    bot_name: Optional[str] = None
+    voice_id: Optional[str] = None
+    first_message: Optional[str] = None
     conversation_style: Optional[str] = None
     compliance_notes: Optional[str] = None
-    voice: Optional[str] = None
     language: Optional[str] = None
     allowed_origins: Optional[List[str]] = None   # restrict chat to these origins
     additional_params: Optional[Dict[str, Any]] = None

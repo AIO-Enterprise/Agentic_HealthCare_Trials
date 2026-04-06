@@ -490,6 +490,127 @@ async def publish_advertisement(
     return ad
 
 
+# ─── Meta Ads Distribution ────────────────────────────────────────────────────
+
+@router.post("/{ad_id}/distribute")
+async def distribute_to_meta(
+    ad_id: str,
+    body: dict,
+    user: User = Depends(require_roles([UserRole.PUBLISHER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Publish the campaign's generated ad creatives to Meta (Facebook/Instagram)
+    via the Marketing API.
+
+    Expected body:
+      platform          : "meta"
+      config:
+        access_token       : Meta User Access Token  (ads_management permission)
+        ad_account_id      : act_XXXXXXXXXX
+        page_id            : Facebook Page ID  (required for ad creatives)
+        destination_url    : URL the ad clicks lead to
+        daily_budget       : daily budget in USD  (e.g. 10.0)
+        targeting_countries: comma-separated ISO country codes  (e.g. "US,GB")
+        selected_creatives : list of creative indexes to publish
+
+    All created ads start in PAUSED state so the publisher can review them in
+    Meta Ads Manager before activating.
+    """
+    from app.services.meta_ads_service import MetaAdsService
+
+    platform = (body.get("platform") or "").lower()
+    if platform != "meta":
+        raise HTTPException(status_code=400, detail=f"Unsupported platform: {platform}")
+
+    cfg = body.get("config") or {}
+
+    access_token       = cfg.get("access_token", "").strip()
+    ad_account_id      = cfg.get("ad_account_id", "").strip()
+    page_id            = cfg.get("page_id", "").strip()
+    destination_url    = cfg.get("destination_url", "").strip()
+    daily_budget_str   = str(cfg.get("daily_budget", "10")).strip()
+    countries_str      = cfg.get("targeting_countries", "US").strip()
+    selected_creatives = cfg.get("selected_creatives") or []
+
+    # ── Validate required fields ──────────────────────────────────────────────
+    missing = [
+        name for name, val in [
+            ("access_token",    access_token),
+            ("ad_account_id",   ad_account_id),
+            ("page_id",         page_id),
+            ("destination_url", destination_url),
+        ] if not val
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Missing required Meta config fields: {', '.join(missing)}",
+        )
+
+    try:
+        daily_budget = float(daily_budget_str)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="daily_budget must be a number")
+
+    targeting_countries = [c.strip().upper() for c in countries_str.split(",") if c.strip()]
+
+    # ── Load advertisement ────────────────────────────────────────────────────
+    result = await db.execute(
+        select(Advertisement).where(
+            Advertisement.id == ad_id,
+            Advertisement.company_id == user.company_id,
+        )
+    )
+    ad = result.scalar_one_or_none()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+    if ad.status not in (AdStatus.APPROVED, AdStatus.PUBLISHED):
+        raise HTTPException(
+            status_code=400,
+            detail="Campaign must be approved or published before distributing to Meta",
+        )
+    if not ad.output_files:
+        raise HTTPException(
+            status_code=400,
+            detail="No ad creatives found. Generate creatives first.",
+        )
+
+    # ── Publish to Meta ───────────────────────────────────────────────────────
+    svc = MetaAdsService(access_token=access_token, ad_account_id=ad_account_id)
+    try:
+        meta_result = await svc.publish_campaign(
+            campaign_name=ad.title,
+            page_id=page_id,
+            creatives=ad.output_files,
+            selected_indices=[int(i) for i in selected_creatives],
+            daily_budget_usd=daily_budget,
+            destination_url=destination_url,
+            targeting_countries=targeting_countries,
+            backend_root=str(BACKEND_ROOT),
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("Meta distribute failed for ad %s: %s", ad_id, exc, exc_info=True)
+        raise HTTPException(status_code=502, detail=str(exc))
+    finally:
+        await svc.close()
+
+    # ── Persist the Ads Manager URL on the ad ────────────────────────────────
+    from sqlalchemy.orm.attributes import flag_modified
+    existing_meta = ad.bot_config or {}
+    existing_meta["meta_campaign_id"] = meta_result["campaign_id"]
+    existing_meta["meta_adset_id"]    = meta_result["adset_id"]
+    existing_meta["meta_ad_ids"]      = meta_result["ad_ids"]
+    existing_meta["meta_manager_url"] = meta_result["ads_manager_url"]
+    ad.bot_config = existing_meta
+    flag_modified(ad, "bot_config")
+    await db.commit()
+
+    return meta_result
+
+
 # ─── Creative Generation ──────────────────────────────────────────────────────
 
 @router.post("/{ad_id}/generate-creatives", response_model=AdvertisementOut)

@@ -28,7 +28,7 @@ class Settings(BaseSettings):
 
     # JWT
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRE_MINUTES: int = 60   # 1 hour
+    JWT_EXPIRE_MINUTES: int = 480  # 8 hours — generation pipelines can run for a long time
 
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./marketing_platform.db"
@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     # ElevenLabs
     ELEVENLABS_API_KEY: Optional[str] = None
     ELEVENLABS_VOICE_ID: str = "EXAVITQu4vr4xnSDxMaL"  # Default: Rachel
+    ELEVENLABS_PHONE_NUMBER_ID: Optional[str] = None  # Phone number ID for outbound calls
 
     # File storage
     UPLOAD_DIR: str = "./uploads"

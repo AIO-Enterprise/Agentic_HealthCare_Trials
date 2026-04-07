@@ -1133,6 +1133,33 @@ async def get_voice_agent_status(
     return status
 
 
+@router.post("/{ad_id}/voice-call/request")
+async def request_voice_call(
+    ad_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Trigger an outbound phone call to the user's cell via ElevenLabs.
+    No auth required — embedded in published landing pages.
+
+    Body: { "phone": "+15551234567", "scheduled_for": "2025-04-07T14:30" (optional) }
+    """
+    phone = (body.get("phone") or "").strip()
+    if not phone:
+        raise HTTPException(status_code=422, detail="phone is required")
+
+    svc = VoicebotAgentService(db)
+    try:
+        result = await svc.outbound_call(ad_id, phone)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"ElevenLabs error: {e}")
+
+    return {"status": "calling", "to": phone, "detail": result}
+
+
 @router.get("/{ad_id}/voice-session/token")
 async def get_voice_session_token(
     ad_id: str,

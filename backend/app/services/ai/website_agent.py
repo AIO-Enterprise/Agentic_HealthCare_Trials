@@ -48,6 +48,11 @@ SURVEY (always include):
   Header:     .survey-header  .survey-title  .survey-sub
   Progress:   <div class="survey-progress-bar"><div class="survey-progress-fill" id="survey-progress"></div></div>
               <p class="survey-step-count" id="survey-step-count">Question 1 of N</p>
+  Voice row:  ALWAYS place this IMMEDIATELY after the progress line and BEFORE the first .survey-step:
+              <div class="survey-voice-row">
+                <button class="btn-voice-call" id="survey-voice-btn">&#128222; Prefer to speak? Call an agent now</button>
+              </div>
+              (This row is NEVER hidden — it stays visible through every step AND after results.)
   Steps:      <div class="survey-step" data-step="N" data-eligible="COMMA,SEPARATED,ELIGIBLE,VALUES">
                 <p class="survey-question">Question text?</p>
                 <div class="option-grid">
@@ -61,9 +66,9 @@ SURVEY (always include):
                 <div class="result-card ineligible" id="result-ineligible">...</div>
               </div>
   Nav:        <div class="survey-nav">
-                <button class="btn-survey-prev" id="survey-prev">← Back</button>
-                <button class="btn-survey-next" id="survey-next">Next →</button>
-                <button class="btn-survey-submit" id="survey-submit">See My Result →</button>
+                <button class="btn-survey-prev" id="survey-prev">&#8592; Back</button>
+                <button class="btn-survey-next" id="survey-next">Next &#8594;</button>
+                <button class="btn-survey-submit" id="survey-submit">See My Result &#8594;</button>
               </div>
 
 INTERACTION (voicebot — place AFTER survey with id="interaction-reveal"):
@@ -226,7 +231,11 @@ class WebsiteAgentService:
     .option-btn {{ padding: 14px 18px; border: 2px solid var(--border); border-radius: 12px; background: var(--white); font-size: 0.9rem; font-weight: 500; color: var(--text); cursor: pointer; text-align: left; transition: border-color 0.15s, background 0.15s; font-family: inherit; }}
     .option-btn:hover {{ border-color: var(--accent); background: rgba(16,185,129,0.04); }}
     .option-btn.selected {{ border-color: var(--accent); background: rgba(16,185,129,0.08); color: var(--primary); font-weight: 700; }}
+    .survey-voice-row {{ display: flex; justify-content: flex-end; margin: 18px 0 4px; }}
+    .btn-voice-call {{ background: transparent; border: 1.5px solid var(--primary); color: var(--primary); padding: 9px 18px; border-radius: 50px; font-size: 0.82rem; font-weight: 600; cursor: pointer; font-family: inherit; transition: background 0.15s, color 0.15s; white-space: nowrap; }}
+    .btn-voice-call:hover {{ background: var(--primary); color: #fff; }}
     .survey-nav {{ display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border); }}
+    .survey-nav-right {{ display: flex; align-items: center; gap: 12px; }}
     .btn-survey-prev {{ background: transparent; border: 1.5px solid var(--border); color: var(--muted); padding: 10px 24px; border-radius: 50px; font-size: 0.9rem; font-weight: 600; cursor: pointer; font-family: inherit; transition: border-color 0.15s; }}
     .btn-survey-prev:hover {{ border-color: var(--primary); color: var(--primary); }}
     .btn-survey-next, .btn-survey-submit {{ background: var(--accent); color: #fff; padding: 11px 28px; border-radius: 50px; font-size: 0.9rem; font-weight: 700; border: none; cursor: pointer; font-family: inherit; transition: opacity 0.15s; }}
@@ -394,10 +403,11 @@ class WebsiteAgentService:
     var okCount = Object.values(answers).filter(function (a) { return a.ok; }).length;
     var pass    = okCount >= Math.ceil(total * 0.6);
 
-    /* Hide questions + nav, show result */
+    /* Hide questions + nav buttons, show result (voice-row stays visible) */
     steps.forEach(function (s) { s.style.display = 'none'; });
     var nav = document.querySelector('.survey-nav');
     if (nav) nav.style.display = 'none';
+    /* voice row stays — do NOT hide .survey-voice-row */
     if (progress && progress.parentElement) progress.style.width = '100%';
     if (counter) counter.textContent = 'Complete';
 
@@ -587,208 +597,322 @@ class WebsiteAgentService:
                 1,
             )
 
-        # ElevenLabs voice call JS (Python-injected, only when voicebot is active)
-        # Uses dynamic ESM import via esm.sh — no UMD globals needed, works in all modern browsers.
+        # ── Survey voice row JS — always injected (not gated on voicebot) ────────
+        # Opens the combined Call Now + Schedule modal for the survey voice button.
+        survey_voice_js = f"""
+<script>
+/* ── Survey voice button — combined Call Now + Schedule modal ────────────── */
+(function () {{
+
+  var AD_ID    = '{ad_id}';
+  var API_BASE = window.location.origin;
+
+  /* ── POST to backend ───────────────────────────────────────────────────── */
+  async function requestCall(phone, scheduledFor) {{
+    var body = {{ phone: phone }};
+    if (scheduledFor) body.scheduled_for = scheduledFor;
+    var resp = await fetch(API_BASE + '/api/advertisements/' + AD_ID + '/voice-call/request', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify(body)
+    }});
+    if (!resp.ok) {{
+      var err = 'Call request failed (HTTP ' + resp.status + ').';
+      try {{ err = (await resp.json()).detail || err; }} catch(_) {{}}
+      throw new Error(err);
+    }}
+    return await resp.json();
+  }}
+
+  /* ══ COMBINED MODAL (survey voice btn — Call Now + Schedule in one popup) ═ */
+  (function () {{
+    var inputStyle = 'width:100%;box-sizing:border-box;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px 13px;font-size:0.9rem;font-family:inherit;outline:none;';
+    var labelStyle = 'display:block;text-align:left;font-size:0.78rem;font-weight:700;color:#374151;margin-bottom:4px';
+
+    var cmWrap = document.createElement('div');
+    cmWrap.innerHTML =
+      '<div id="combined-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:10000;align-items:center;justify-content:center;padding:16px">' +
+        '<div style="background:#fff;border-radius:20px;padding:32px 28px;max-width:440px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.25);box-sizing:border-box;max-height:90vh;overflow-y:auto">' +
+          '<div style="text-align:center;margin-bottom:20px">' +
+            '<div style="font-size:2rem;margin-bottom:6px">&#128222;</div>' +
+            '<h3 style="font-size:1.1rem;font-weight:800;margin:0 0 4px;color:#111">Speak to our Staff</h3>' +
+            '<p style="color:#64748b;font-size:0.85rem;margin:0;line-height:1.5">Choose how you\'d like us to reach you.</p>' +
+          '</div>' +
+          '<div style="background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:14px;padding:20px 20px 16px;margin-bottom:16px">' +
+            '<p style="font-size:0.78rem;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:#15803d;margin:0 0 4px">&#9889; Call Me Now</p>' +
+            '<p style="font-size:0.78rem;color:#64748b;margin:0 0 12px;line-height:1.4">Enter your number and our staff will call you within seconds.</p>' +
+            '<label style="' + labelStyle + '">Your Phone Number</label>' +
+            '<input id="cm-now-phone" type="tel" placeholder="+1 (555) 000-0000" autocomplete="tel" style="' + inputStyle + 'margin-bottom:12px" />' +
+            '<button id="cm-now-btn" style="width:100%;background:#10b981;color:#fff;border:none;border-radius:50px;padding:12px;font-size:0.9rem;font-weight:700;cursor:pointer;font-family:inherit">Call Me Now &#8594;</button>' +
+            '<div id="cm-now-status" style="display:none;margin-top:10px;padding:10px 12px;border-radius:8px;font-size:0.82rem;font-weight:600;line-height:1.4"></div>' +
+          '</div>' +
+          '<div style="background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:14px;padding:20px 20px 16px;margin-bottom:16px">' +
+            '<p style="font-size:0.78rem;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:#1d4ed8;margin:0 0 4px">&#128197; Schedule a Call</p>' +
+            '<p style="font-size:0.78rem;color:#64748b;margin:0 0 12px;line-height:1.4">Pick a preferred date &amp; time and our staff will call you at that slot.</p>' +
+            '<label style="' + labelStyle + '">Your Phone Number</label>' +
+            '<input id="cm-sc-phone" type="tel" placeholder="+1 (555) 000-0000" autocomplete="tel" style="' + inputStyle + 'margin-bottom:10px" />' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">' +
+              '<div><label style="' + labelStyle + '">Preferred Date</label><input id="cm-sc-date" type="date" style="' + inputStyle + '" /></div>' +
+              '<div><label style="' + labelStyle + '">Preferred Time</label><input id="cm-sc-time" type="time" style="' + inputStyle + '" /></div>' +
+            '</div>' +
+            '<button id="cm-sc-btn" style="width:100%;background:#3b82f6;color:#fff;border:none;border-radius:50px;padding:12px;font-size:0.9rem;font-weight:700;cursor:pointer;font-family:inherit">Schedule a Call &#8594;</button>' +
+            '<div id="cm-sc-status" style="display:none;margin-top:10px;padding:10px 12px;border-radius:8px;font-size:0.82rem;font-weight:600;line-height:1.4"></div>' +
+          '</div>' +
+          '<button id="cm-close" style="display:block;width:100%;text-align:center;background:none;border:none;color:#94a3b8;cursor:pointer;font-size:0.82rem;font-family:inherit;padding:4px">Cancel</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(cmWrap);
+
+    var cmBackdrop = document.getElementById('combined-modal');
+    var nowPhone   = document.getElementById('cm-now-phone');
+    var nowBtn     = document.getElementById('cm-now-btn');
+    var nowStatus  = document.getElementById('cm-now-status');
+    var scPhone    = document.getElementById('cm-sc-phone');
+    var scDate     = document.getElementById('cm-sc-date');
+    var scTime     = document.getElementById('cm-sc-time');
+    var scBtn      = document.getElementById('cm-sc-btn');
+    var scStatus   = document.getElementById('cm-sc-status');
+    var cmClose    = document.getElementById('cm-close');
+
+    var td = new Date(), tmm = String(td.getMonth()+1).padStart(2,'0'), tdd = String(td.getDate()).padStart(2,'0');
+    scDate.min = td.getFullYear() + '-' + tmm + '-' + tdd;
+
+    function showSt(el, msg, type) {{
+      var bg = type === 'error'   ? 'background:#fef2f2;color:#b91c1c;border:1.5px solid #fecaca'
+             : type === 'success' ? 'background:#f0fdf4;color:#15803d;border:1.5px solid #bbf7d0'
+             :                      'background:#eff6ff;color:#1d4ed8;border:1.5px solid #bfdbfe';
+      el.style.cssText = 'display:block;margin-top:10px;padding:10px 12px;border-radius:8px;font-size:0.82rem;font-weight:600;line-height:1.4;' + bg;
+      el.innerHTML = msg;
+    }}
+
+    function cmOpen()  {{ cmBackdrop.style.display = 'flex'; }}
+    function cmClose_() {{
+      cmBackdrop.style.display = 'none';
+      nowPhone.value = ''; scPhone.value = ''; scDate.value = ''; scTime.value = '';
+      nowStatus.style.display = 'none'; scStatus.style.display = 'none';
+      nowBtn.disabled = false; nowBtn.textContent = 'Call Me Now \u2192';
+      scBtn.disabled  = false; scBtn.textContent  = 'Schedule a Call \u2192';
+    }}
+
+    cmClose.addEventListener('click', cmClose_);
+    cmBackdrop.addEventListener('click', function (e) {{ if (e.target === cmBackdrop) cmClose_(); }});
+
+    nowBtn.addEventListener('click', async function () {{
+      var phone = (nowPhone.value || '').trim();
+      if (!phone) {{ nowPhone.style.borderColor = '#ef4444'; return; }}
+      nowPhone.style.borderColor = '#e2e8f0';
+      nowBtn.disabled = true; nowBtn.textContent = 'Calling\u2026';
+      showSt(nowStatus, 'Connecting our staff \u2014 your phone will ring shortly\u2026', 'info');
+      try {{
+        await requestCall(phone);
+        showSt(nowStatus, '&#10003; Calling you now! Pick up when your phone rings.', 'success');
+        setTimeout(cmClose_, 4000);
+      }} catch (e) {{
+        showSt(nowStatus, e.message, 'error');
+        nowBtn.disabled = false; nowBtn.textContent = 'Call Me Now \u2192';
+      }}
+    }});
+
+    scBtn.addEventListener('click', async function () {{
+      var phone = (scPhone.value || '').trim();
+      var date  = (scDate.value  || '').trim();
+      var time  = (scTime.value  || '').trim();
+      var ok = true;
+      [nowPhone, scPhone].forEach(function(el) {{ el.style.borderColor = '#e2e8f0'; }});
+      if (!phone) {{ scPhone.style.borderColor = '#ef4444'; ok = false; }}
+      if (!date)  {{ scDate.style.borderColor  = '#ef4444'; ok = false; }}
+      if (!time)  {{ scTime.style.borderColor  = '#ef4444'; ok = false; }}
+      if (!ok) return;
+      scBtn.disabled = true; scBtn.textContent = 'Scheduling\u2026';
+      showSt(scStatus, 'Scheduling your call\u2026', 'info');
+      try {{
+        await requestCall(phone, date + 'T' + time);
+        showSt(scStatus, '&#10003; Scheduled! Our staff will call you on ' + date + ' at ' + time + '.', 'success');
+        setTimeout(cmClose_, 5000);
+      }} catch (e) {{
+        showSt(scStatus, e.message, 'error');
+        scBtn.disabled = false; scBtn.textContent = 'Schedule a Call \u2192';
+      }}
+    }});
+
+    /* Event delegation — catches the button regardless of id/timing */
+    document.addEventListener('click', function (e) {{
+      var btn = e.target.closest('#survey-voice-btn, .btn-voice-call');
+      if (btn) cmOpen();
+    }});
+  }})();
+
+}})();
+</script>"""
+
+        # ElevenLabs voice call JS (interaction-section buttons — only when voicebot is active)
         voice_js = ""
         if has_voice and ad_id:
             voice_js = f"""
 <script>
-/* ── ElevenLabs Voice Call + Schedule Modal ─────────────────────────────── */
-
-/* Helper: find button by id OR by partial text inside .interaction-cards */
-function findInteractionBtn(id, textHints) {{
-  var el = document.getElementById(id);
-  if (el) return el;
-  /* fallback: scan all buttons inside the interaction section */
-  var btns = document.querySelectorAll('.interaction-card__btn, .interaction-section button, #interaction-reveal button');
-  for (var i = 0; i < btns.length; i++) {{
-    var t = (btns[i].textContent || '').toLowerCase();
-    for (var j = 0; j < textHints.length; j++) {{
-      if (t.indexOf(textHints[j]) !== -1) {{
-        btns[i].id = id; /* patch the id for next time */
-        return btns[i];
-      }}
-    }}
-  }}
-  return null;
-}}
-
-/* ══ 1. SCHEDULE A CALL MODAL (fully independent) ══════════════════════════ */
+/* ── ElevenLabs Outbound Call — interaction section buttons ──────────────── */
 (function () {{
-  var btn = findInteractionBtn('schedule-call-btn', ['schedule', 'callback', 'call back', 'request a call']);
-  if (!btn) {{ console.warn('[ScheduleCall] schedule button not found'); return; }}
-
-  var todayStr = (function () {{
-    var d = new Date(), mm = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0');
-    return d.getFullYear() + '-' + mm + '-' + dd;
-  }})();
-
-  var wrap = document.createElement('div');
-  wrap.innerHTML =
-    '<div id="sc-backdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:10000;align-items:center;justify-content:center;padding:16px">' +
-      '<div style="background:#fff;border-radius:20px;padding:36px 32px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.25);text-align:center;box-sizing:border-box">' +
-        '<div style="font-size:2rem;margin-bottom:8px">&#128197;</div>' +
-        '<h3 style="font-size:1.2rem;font-weight:800;margin:0 0 6px;color:#111">Schedule Your Call</h3>' +
-        '<p style="color:#64748b;font-size:0.875rem;margin:0 0 22px">Choose a date &amp; time and enter your number &mdash; we\'ll call you on schedule.</p>' +
-        '<div style="text-align:left;margin-bottom:12px"><label style="font-size:0.78rem;font-weight:700;color:#374151;display:block;margin-bottom:4px">Date</label>' +
-        '<input id="sc-date" type="date" min="' + todayStr + '" style="width:100%;box-sizing:border-box;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px 13px;font-size:0.9rem;font-family:inherit;outline:none" /></div>' +
-        '<div style="text-align:left;margin-bottom:12px"><label style="font-size:0.78rem;font-weight:700;color:#374151;display:block;margin-bottom:4px">Preferred Time</label>' +
-        '<input id="sc-time" type="time" style="width:100%;box-sizing:border-box;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px 13px;font-size:0.9rem;font-family:inherit;outline:none" /></div>' +
-        '<div style="text-align:left;margin-bottom:20px"><label style="font-size:0.78rem;font-weight:700;color:#374151;display:block;margin-bottom:4px">Phone Number</label>' +
-        '<input id="sc-phone" type="tel" placeholder="+1 (555) 000-0000" style="width:100%;box-sizing:border-box;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px 13px;font-size:0.9rem;font-family:inherit;outline:none" /></div>' +
-        '<button id="sc-submit" style="width:100%;background:#10b981;color:#fff;border:none;border-radius:50px;padding:13px;font-size:0.95rem;font-weight:700;cursor:pointer;font-family:inherit">Confirm Schedule</button>' +
-        '<div id="sc-thanks" style="display:none;margin-top:16px;padding:12px;background:#f0fdf4;border-radius:10px;color:#15803d;font-weight:600;font-size:0.9rem">&#10003; Scheduled! We\'ll call you at your chosen time.</div>' +
-        '<button id="sc-close" style="margin-top:12px;background:none;border:none;color:#94a3b8;cursor:pointer;font-size:0.82rem;font-family:inherit">Cancel</button>' +
-      '</div>' +
-    '</div>';
-  document.body.appendChild(wrap);
-
-  var backdrop = document.getElementById('sc-backdrop');
-  var scDate   = document.getElementById('sc-date');
-  var scTime   = document.getElementById('sc-time');
-  var scPhone  = document.getElementById('sc-phone');
-  var scSubmit = document.getElementById('sc-submit');
-  var scThanks = document.getElementById('sc-thanks');
-  var scClose  = document.getElementById('sc-close');
-
-  function openModal()  {{ backdrop.style.display = 'flex'; scDate.focus(); }}
-  function closeModal() {{ backdrop.style.display = 'none'; }}
-
-  btn.addEventListener('click', openModal);
-  scClose.addEventListener('click', closeModal);
-  backdrop.addEventListener('click', function (e) {{ if (e.target === backdrop) closeModal(); }});
-
-  scSubmit.addEventListener('click', function () {{
-    var date = (scDate.value || '').trim(), time = (scTime.value || '').trim(), phone = (scPhone.value || '').trim();
-    var ok = true;
-    [scDate, scTime, scPhone].forEach(function (el) {{ el.style.borderColor = '#e2e8f0'; }});
-    if (!date)  {{ scDate.style.borderColor  = '#ef4444'; ok = false; }}
-    if (!time)  {{ scTime.style.borderColor  = '#ef4444'; ok = false; }}
-    if (!phone) {{ scPhone.style.borderColor = '#ef4444'; ok = false; }}
-    if (!ok) return;
-    scSubmit.disabled = true;
-    scSubmit.textContent = 'Scheduled \u2713';
-    scThanks.style.display = 'block';
-    setTimeout(function () {{
-      closeModal();
-      scSubmit.disabled = false;
-      scSubmit.textContent = 'Confirm Schedule';
-      scThanks.style.display = 'none';
-      scDate.value = ''; scTime.value = ''; scPhone.value = '';
-    }}, 3000);
-  }});
-}})();
-
-/* ══ 2. INSTANT VOICE CALL (fully independent) ═════════════════════════════ */
-(function () {{
-  var voiceBtn = findInteractionBtn('voice-call-btn', ['start voice', 'instant call', 'talk now', 'speak now', 'voice call']);
-  if (!voiceBtn) {{ console.warn('[VoiceCall] voice button not found'); return; }}
 
   var AD_ID    = '{ad_id}';
   var API_BASE = window.location.origin;
-  var session  = null;
 
-  /* Status bar injected inside the same card as the button */
-  var statusBar = document.createElement('p');
-  statusBar.style.cssText = 'display:none;margin:10px 0 0;padding:8px 14px;border-radius:8px;font-size:0.82rem;font-weight:600;text-align:center;line-height:1.4';
-  voiceBtn.insertAdjacentElement('afterend', statusBar);
-
-  function showStatus(msg, type) {{
-    var bg = type === 'error' ? '#fef2f2' : type === 'success' ? '#f0fdf4' : '#eff6ff';
-    var co = type === 'error' ? '#b91c1c' : type === 'success' ? '#15803d' : '#1d4ed8';
-    var bd = type === 'error' ? '#fecaca' : type === 'success' ? '#bbf7d0' : '#bfdbfe';
-    statusBar.style.background = bg; statusBar.style.color = co; statusBar.style.border = '1.5px solid ' + bd;
-    statusBar.innerHTML = msg; statusBar.style.display = 'block';
-  }}
-  function hideStatus() {{ statusBar.style.display = 'none'; }}
-
-  function setBtn(text, disabled) {{
-    voiceBtn.textContent = text; voiceBtn.disabled = disabled;
-    voiceBtn.style.opacity = disabled ? '0.6' : '1';
-    voiceBtn.style.cursor  = disabled ? 'not-allowed' : 'pointer';
+  /* ── Utility: find a button by ID or by text fallback ─────────────────── */
+  function findBtn(id, hints) {{
+    var el = document.getElementById(id);
+    if (el) return el;
+    var all = document.querySelectorAll('#interaction-reveal button, .interaction-card__btn');
+    for (var i = 0; i < all.length; i++) {{
+      var t = (all[i].textContent || '').toLowerCase();
+      for (var j = 0; j < hints.length; j++) if (t.indexOf(hints[j]) !== -1) {{ all[i].id = id; return all[i]; }}
+    }}
+    return null;
   }}
 
-  function endCall() {{
-    if (!session) return;
-    try {{ session.ws.close(1000); }} catch(_) {{}}
-    try {{ session.processor.disconnect(); }} catch(_) {{}}
-    session.stream.getTracks().forEach(function (t) {{ t.stop(); }});
-    try {{ session.ctx.close(); }} catch(_) {{}}
-    session = null;
-    setBtn('Start Voice Call \u2192', false);
-    hideStatus();
+  /* ── Shared modal builder ──────────────────────────────────────────────── */
+  function makeModal(cfg) {{
+    /* cfg: {{ id, icon, title, subtitle, fields[], submitText }} */
+    var fieldsHtml = cfg.fields.map(function (f) {{
+      var input = f.type === 'tel'
+        ? '<input id="' + f.id + '" type="tel" placeholder="+1 (555) 000-0000" autocomplete="tel"'
+        : f.type === 'date'
+        ? '<input id="' + f.id + '" type="date" min="' + todayStr() + '"'
+        : '<input id="' + f.id + '" type="' + f.type + '"';
+      input += ' style="width:100%;box-sizing:border-box;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px 13px;font-size:0.9rem;font-family:inherit;outline:none;margin-bottom:14px" />';
+      return '<label style="display:block;text-align:left;font-size:0.78rem;font-weight:700;color:#374151;margin-bottom:4px">' + f.label + '</label>' + input;
+    }}).join('');
+
+    var wrap = document.createElement('div');
+    wrap.innerHTML =
+      '<div id="' + cfg.id + '" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:10000;align-items:center;justify-content:center;padding:16px">' +
+        '<div style="background:#fff;border-radius:20px;padding:36px 32px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.25);text-align:center;box-sizing:border-box">' +
+          '<div style="font-size:2.2rem;margin-bottom:8px">' + cfg.icon + '</div>' +
+          '<h3 style="font-size:1.15rem;font-weight:800;margin:0 0 6px;color:#111">' + cfg.title + '</h3>' +
+          '<p style="color:#64748b;font-size:0.875rem;margin:0 0 20px;line-height:1.5">' + cfg.subtitle + '</p>' +
+          fieldsHtml +
+          '<button class="m-submit" style="width:100%;background:#10b981;color:#fff;border:none;border-radius:50px;padding:13px;font-size:0.95rem;font-weight:700;cursor:pointer;font-family:inherit">' + cfg.submitText + '</button>' +
+          '<div class="m-status" style="display:none;margin-top:14px;padding:11px 14px;border-radius:10px;font-size:0.85rem;font-weight:600;line-height:1.4"></div>' +
+          '<button class="m-close" style="margin-top:10px;background:none;border:none;color:#94a3b8;cursor:pointer;font-size:0.82rem;font-family:inherit">Cancel</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(wrap);
+
+    var backdrop = document.getElementById(cfg.id);
+    var submit   = backdrop.querySelector('.m-submit');
+    var status   = backdrop.querySelector('.m-status');
+    var closeBtn = backdrop.querySelector('.m-close');
+
+    function open()  {{ backdrop.style.display = 'flex'; }}
+    function close() {{ backdrop.style.display = 'none'; status.style.display = 'none'; submit.disabled = false; submit.textContent = cfg.submitText; }}
+    function showStatus(msg, type) {{
+      var styles = type === 'error'   ? 'background:#fef2f2;color:#b91c1c;border:1.5px solid #fecaca'
+                 : type === 'success' ? 'background:#f0fdf4;color:#15803d;border:1.5px solid #bbf7d0'
+                 :                     'background:#eff6ff;color:#1d4ed8;border:1.5px solid #bfdbfe';
+      status.style.cssText = 'display:block;margin-top:14px;padding:11px 14px;border-radius:10px;font-size:0.85rem;font-weight:600;line-height:1.4;' + styles;
+      status.innerHTML = msg;
+    }}
+
+    closeBtn.addEventListener('click', close);
+    backdrop.addEventListener('click', function (e) {{ if (e.target === backdrop) close(); }});
+
+    /* Collect field values + validate */
+    function collect() {{
+      var vals = {{}}, ok = true;
+      cfg.fields.forEach(function (f) {{
+        var el = document.getElementById(f.id);
+        el.style.borderColor = '#e2e8f0';
+        var v = (el.value || '').trim();
+        if (!v) {{ el.style.borderColor = '#ef4444'; ok = false; }}
+        vals[f.id] = v;
+      }});
+      return ok ? vals : null;
+    }}
+
+    return {{ open: open, close: close, showStatus: showStatus, collect: collect, submit: submit }};
   }}
 
-  function playPCM(ctx, b64, sched) {{
+  function todayStr() {{
+    var d = new Date(), mm = String(d.getMonth()+1).padStart(2,'0'), dd = String(d.getDate()).padStart(2,'0');
+    return d.getFullYear() + '-' + mm + '-' + dd;
+  }}
+
+  /* ── POST to backend ───────────────────────────────────────────────────── */
+  async function requestCall(phone, scheduledFor) {{
+    var body = {{ phone: phone }};
+    if (scheduledFor) body.scheduled_for = scheduledFor;
+    var resp = await fetch(API_BASE + '/api/advertisements/' + AD_ID + '/voice-call/request', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify(body)
+    }});
+    if (!resp.ok) {{
+      var err = 'Call request failed (HTTP ' + resp.status + ').';
+      try {{ err = (await resp.json()).detail || err; }} catch(_) {{}}
+      throw new Error(err);
+    }}
+    return await resp.json();
+  }}
+
+  /* ══ 1. INSTANT CALL (interaction section "Call Me Now" button) ═══════════ */
+  var im = makeModal({{
+    id: 'instant-modal',
+    icon: '&#128222;',
+    title: 'Call Me Now',
+    subtitle: 'Enter your phone number and our staff will call you within seconds.',
+    fields: [{{ id: 'ic-phone', label: 'Your Phone Number', type: 'tel' }}],
+    submitText: 'Call Me Now \u2192'
+  }});
+
+  im.submit.addEventListener('click', async function () {{
+    var vals = im.collect();
+    if (!vals) return;
+    im.submit.disabled = true; im.submit.textContent = 'Calling\u2026';
+    im.showStatus('Connecting our staff \u2014 your phone will ring shortly\u2026', 'info');
     try {{
-      var bin = atob(b64), bytes = new Uint8Array(bin.length);
-      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      var i16 = new Int16Array(bytes.buffer), f32 = new Float32Array(i16.length);
-      for (var i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
-      var buf = ctx.createBuffer(1, f32.length, 16000);
-      buf.copyToChannel(f32, 0);
-      var src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
-      var at = Math.max(ctx.currentTime, sched.t); src.start(at); sched.t = at + buf.duration;
-    }} catch(_) {{}}
+      await requestCall(vals['ic-phone']);
+      im.showStatus('&#10003; Calling you now! Pick up when your phone rings.', 'success');
+      setTimeout(function () {{ im.close(); }}, 4000);
+    }} catch (e) {{
+      im.showStatus(e.message, 'error');
+      im.submit.disabled = false; im.submit.textContent = 'Call Me Now \u2192';
+    }}
+  }});
+
+  /* ══ 2. SCHEDULED CALL ═════════════════════════════════════════════════ */
+  var schedBtn = findBtn('schedule-call-btn', ['schedule', 'callback', 'call back', 'request a call']);
+  if (schedBtn) {{
+    var sm = makeModal({{
+      id: 'schedule-modal',
+      icon: '&#128197;',
+      title: 'Schedule a Call',
+      subtitle: 'Pick a date &amp; time and enter your number &mdash; our staff will call you at your chosen slot.',
+      fields: [
+        {{ id: 'sc-date',  label: 'Date',             type: 'date' }},
+        {{ id: 'sc-time',  label: 'Preferred Time',   type: 'time' }},
+        {{ id: 'sc-phone', label: 'Your Phone Number', type: 'tel'  }}
+      ],
+      submitText: 'Confirm Schedule'
+    }});
+
+    schedBtn.addEventListener('click', sm.open);
+
+    sm.submit.addEventListener('click', async function () {{
+      var vals = sm.collect();
+      if (!vals) return;
+      var scheduledFor = vals['sc-date'] + 'T' + vals['sc-time'];
+      sm.submit.disabled = true; sm.submit.textContent = 'Scheduling\u2026';
+      sm.showStatus('Scheduling your call\u2026', 'info');
+      try {{
+        await requestCall(vals['sc-phone'], scheduledFor);
+        sm.showStatus('&#10003; Scheduled! We will call ' + vals['sc-phone'] + ' on ' + vals['sc-date'] + ' at ' + vals['sc-time'] + '.', 'success');
+        schedBtn.textContent = 'Call Scheduled';
+        setTimeout(function () {{ sm.close(); schedBtn.textContent = 'Schedule Another Call'; }}, 5000);
+      }} catch (e) {{
+        sm.showStatus(e.message, 'error');
+        sm.submit.disabled = false; sm.submit.textContent = 'Confirm Schedule';
+      }}
+    }});
   }}
 
-  async function startCall() {{
-    hideStatus(); setBtn('Connecting\u2026', true);
-    try {{
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {{
-        setBtn('Start Voice Call \u2192', false);
-        showStatus('Microphone requires HTTPS. Ask your admin to enable SSL, or in Chrome visit chrome://flags and allow this origin as secure.', 'error');
-        return;
-      }}
-      var stream;
-      try {{ stream = await navigator.mediaDevices.getUserMedia({{ audio: true }}); }}
-      catch (permErr) {{
-        setBtn('Start Voice Call \u2192', false);
-        showStatus(permErr.name === 'NotAllowedError' || permErr.name === 'PermissionDeniedError'
-          ? 'Mic access denied \u2014 click the mic icon in your browser address bar and allow, then try again.'
-          : 'Mic error: ' + permErr.message, 'error');
-        return;
-      }}
-      showStatus('Connecting\u2026', 'info');
-      var resp;
-      try {{ resp = await fetch(API_BASE + '/api/advertisements/' + AD_ID + '/voice-session/token'); }}
-      catch (_) {{ stream.getTracks().forEach(function(t){{t.stop();}}); setBtn('Start Voice Call \u2192', false); showStatus('Network error \u2014 check your connection.', 'error'); return; }}
-      if (!resp.ok) {{ stream.getTracks().forEach(function(t){{t.stop();}}); setBtn('Start Voice Call \u2192', false); showStatus('Session token error (HTTP\u00a0' + resp.status + '). Is the agent provisioned?', 'error'); return; }}
-      var data = await resp.json();
-      if (!data.signed_url) {{ stream.getTracks().forEach(function(t){{t.stop();}}); setBtn('Start Voice Call \u2192', false); showStatus('No signed URL from server. Check ElevenLabs config.', 'error'); return; }}
-
-      var ctx = new AudioContext({{ sampleRate: 16000 }}), sched = {{ t: ctx.currentTime }};
-      var ws  = new WebSocket(data.signed_url);
-
-      ws.onopen = function () {{
-        setBtn('\u23F9 End Call', false); showStatus('Live \u2014 speak now', 'success');
-        var src = ctx.createMediaStreamSource(stream), proc = ctx.createScriptProcessor(4096, 1, 1);
-        var mute = ctx.createGain(); mute.gain.value = 0;
-        src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
-        proc.onaudioprocess = function (e) {{
-          if (!session || ws.readyState !== WebSocket.OPEN) return;
-          var f32 = e.inputBuffer.getChannelData(0), i16 = new Int16Array(f32.length);
-          for (var i = 0; i < f32.length; i++) i16[i] = Math.round(Math.max(-1, Math.min(1, f32[i])) * 32767);
-          var u8 = new Uint8Array(i16.buffer), b64 = '';
-          for (var i = 0; i < u8.length; i += 8192) b64 += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + 8192, u8.length)));
-          ws.send(JSON.stringify({{ user_audio_chunk: btoa(b64) }}));
-        }};
-        session = {{ ws: ws, ctx: ctx, processor: proc, stream: stream, schedRef: sched }};
-      }};
-      ws.onmessage = function (evt) {{
-        try {{
-          var msg = JSON.parse(evt.data);
-          if (msg.type === 'audio' && msg.audio_event) playPCM(ctx, msg.audio_event.audio_base_64, sched);
-          else if (msg.type === 'interruption') sched.t = ctx.currentTime;
-          else if (msg.type === 'ping') ws.send(JSON.stringify({{ type: 'pong', event_id: msg.ping_event && msg.ping_event.event_id }}));
-        }} catch(_) {{}}
-      }};
-      ws.onerror = function () {{ endCall(); showStatus('Connection error \u2014 verify ElevenLabs API key and agent provisioning.', 'error'); }};
-      ws.onclose = function (evt) {{ if (session) {{ var u = evt.code !== 1000; endCall(); if (u) showStatus('Session ended (code ' + evt.code + '). Try again.', 'error'); }} }};
-    }} catch (e) {{ setBtn('Start Voice Call \u2192', false); showStatus('Error: ' + e.message, 'error'); }}
-  }}
-
-  voiceBtn.addEventListener('click', function () {{ session ? endCall() : startCall(); }});
 }})();
 </script>"""
 
@@ -806,6 +930,7 @@ function findInteractionBtn(id, textHints) {{
 {chat_float_html}
 {survey_js}
 {chat_js}
+{survey_voice_js}
 {voice_js}
 </body>
 </html>"""
@@ -856,9 +981,9 @@ VOICEBOT SECTION — add immediately after the survey section:
   Title: "How would you like to speak with {bot_name}?"
   Sub: short subtitle
   Two .interaction-card divs inside .interaction-cards:
-    Card 1 (featured): icon=🎤, title="Talk to {bot_name} Now",
-      desc="Speak with {bot_name} right now through your browser — no phone needed.",
-      btn id="voice-call-btn" text="Start Voice Call →", meta="Uses your microphone · Instant · Free"
+    Card 1 (featured): icon=📞, title="Call Me Now",
+      desc="Enter your phone number and {bot_name} will call you within seconds.",
+      btn id="voice-call-btn" text="Call Me Now →", meta="AI calls your phone · Instant · Free"
     Card 2: icon=📅, title="Schedule a Call",
       desc="Pick a date, time, and enter your phone number — we'll call you at your chosen slot.",
       btn id="schedule-call-btn" text="Schedule a Call →", meta="Phone call · You choose the time · Free"
@@ -970,14 +1095,14 @@ Start output with <nav>. End with </footer>. No inline styles. No custom classes
             interaction_html = f"""
 <section class="interaction-section" id="interaction-reveal">
   <h2 class="interaction-section__title">How would you like to speak with {bot_name}?</h2>
-  <p class="interaction-section__sub">Choose your preferred way to connect with our AI coordinator.</p>
+  <p class="interaction-section__sub">Choose your preferred way to connect with our staff.</p>
   <div class="interaction-cards">
     <div class="interaction-card featured">
       <div class="interaction-card__icon">🎤</div>
       <p class="interaction-card__title">Talk to {bot_name} Now</p>
       <p class="interaction-card__desc">{bot_name} will speak with you right now through your browser — no phone needed.</p>
-      <button class="interaction-card__btn" id="voice-call-btn">Start Voice Call →</button>
-      <p class="interaction-card__meta">Uses your microphone · Instant · Free</p>
+      <button class="interaction-card__btn" id="voice-call-btn">Call Me Now →</button>
+      <p class="interaction-card__meta">AI calls your phone · Instant · Free</p>
     </div>
     <div class="interaction-card">
       <div class="interaction-card__icon">📅</div>
@@ -987,7 +1112,7 @@ Start output with <nav>. End with </footer>. No inline styles. No custom classes
       <p class="interaction-card__meta">Phone call · You choose the time · Free</p>
     </div>
   </div>
-  <p class="interaction-note">{bot_name} is an AI assistant. Your responses are confidential and used only to assess eligibility.</p>
+  <p class="interaction-note">Your responses are confidential and used only to assess eligibility.</p>
 </section>"""
         elif "chatbot" in ad_types:
             interaction_html = f"""
@@ -1022,6 +1147,10 @@ Start output with <nav>. End with </footer>. No inline styles. No custom classes
       <p class="survey-sub">Answer a few quick questions. Takes about 2 minutes.</p>
       <div class="survey-progress-bar"><div class="survey-progress-fill" id="survey-progress"></div></div>
       <p class="survey-step-count" id="survey-step-count">Question 1 of 3</p>
+    </div>
+
+    <div class="survey-voice-row">
+      <button class="btn-voice-call" id="survey-voice-btn">&#128222; Prefer to speak? Call an agent now</button>
     </div>
 
     <div class="survey-step active" data-step="1" data-eligible="yes">

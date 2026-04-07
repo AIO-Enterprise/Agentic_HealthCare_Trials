@@ -24,6 +24,13 @@ async function request(endpoint, options = {}) {
   });
 
   if (!res.ok) {
+    // Token expired or invalid — clear session and redirect to login
+    if (res.status === 401) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      window.location.href = "/login";
+      return;
+    }
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     let message;
     if (Array.isArray(err.detail)) {
@@ -192,7 +199,7 @@ export const documentsAPI = {
   // When storage moves to Azure Blob, this will return the SAS URL instead.
   getFileUrl: (docId) => {
     const token = localStorage.getItem("token");
-    return `${API_BASE}/documents/${docId}/file?token=${token}`;
+    return `${API_BASE}/documents/${docId}/file?token=${encodeURIComponent(token)}`;
   },
 
   update: (docId, data) =>
@@ -250,7 +257,7 @@ export const adsAPI = {
 
   getDocFileUrl: (adId, docId) => {
     const token = localStorage.getItem("token");
-    return `${API_BASE}/advertisements/${adId}/documents/${docId}/file?token=${token}`;
+    return `${API_BASE}/advertisements/${adId}/documents/${docId}/file?token=${encodeURIComponent(token)}`;
   },
 
   generateStrategy: (adId) =>
@@ -289,11 +296,11 @@ export const adsAPI = {
   // Token passed as query param so the browser can open them directly.
   websitePreviewUrl: (adId) => {
     const token = localStorage.getItem("token");
-    return `/api/advertisements/${adId}/website?token=${token}`;
+    return `/api/advertisements/${adId}/website?token=${encodeURIComponent(token)}`;
   },
   websiteDownloadUrl: (adId) => {
     const token = localStorage.getItem("token");
-    return `/api/advertisements/${adId}/website?download=true&token=${token}`;
+    return `/api/advertisements/${adId}/website?download=true&token=${encodeURIComponent(token)}`;
   },
 
   minorEditStrategy: (adId, data) =>

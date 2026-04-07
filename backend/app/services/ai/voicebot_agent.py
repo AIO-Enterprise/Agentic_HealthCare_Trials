@@ -61,12 +61,73 @@ class VoicebotAgentService:
             logger.info("Updated ElevenLabs agent %s for ad %s", existing_agent_id, advertisement_id)
         else:
             agent = await self._create_agent(payload)
-            bot_config["elevenlabs_agent_id"] = agent["agent_id"]
-            ad.bot_config = bot_config
+            # Must copy the dict — plain Column(JSON) doesn't track in-place mutations,
+            # so reassigning a new object is required for SQLAlchemy to detect the change.
+            new_config = dict(bot_config)
+            new_config["elevenlabs_agent_id"] = agent["agent_id"]
+            ad.bot_config = new_config
             await self.db.commit()
             logger.info("Created ElevenLabs agent %s for ad %s", agent["agent_id"], advertisement_id)
 
         return agent
+
+    async def _get_phone_number_id(self, client: httpx.AsyncClient) -> str:
+        """
+        Return the phone number ID to use for outbound calls.
+        Prefers ELEVENLABS_PHONE_NUMBER_ID env var; falls back to fetching
+        the first configured phone number from the ElevenLabs account.
+        """
+        if settings.ELEVENLABS_PHONE_NUMBER_ID:
+            return settings.ELEVENLABS_PHONE_NUMBER_ID
+
+        resp = await client.get(
+            f"{ELEVENLABS_BASE}/v1/convai/phone-numbers",
+            headers=self._headers,
+            timeout=15.0,
+        )
+        if not resp.is_success:
+            raise ValueError(
+                f"Could not fetch phone numbers from ElevenLabs ({resp.status_code}): {resp.text}"
+            )
+        data = resp.json()
+        # API returns either a list or {"phone_numbers": [...]}
+        numbers = data if isinstance(data, list) else data.get("phone_numbers", [])
+        if not numbers:
+            raise ValueError(
+                "No phone numbers are configured in your ElevenLabs account. "
+                "Go to ElevenLabs > Conversational AI > Phone Numbers and add one."
+            )
+        return numbers[0].get("phone_number_id") or numbers[0].get("id")
+
+    async def outbound_call(self, advertisement_id: str, to_number: str) -> Dict[str, Any]:
+        """
+        Trigger an outbound phone call from ElevenLabs to the given number.
+        Automatically uses the first phone number configured in the ElevenLabs account.
+        """
+        ad = await self._get_advertisement(advertisement_id)
+        bot_config: Dict[str, Any] = ad.bot_config or {}
+        agent_id = bot_config.get("elevenlabs_agent_id")
+        if not agent_id:
+            raise ValueError(
+                "No ElevenLabs agent provisioned for this campaign. "
+                "Provision the agent first from the publisher dashboard."
+            )
+
+        async with httpx.AsyncClient() as client:
+            phone_number_id = await self._get_phone_number_id(client)
+            resp = await client.post(
+                f"{ELEVENLABS_BASE}/v1/convai/twilio/outbound-call",
+                headers=self._headers,
+                json={
+                    "agent_id": agent_id,
+                    "agent_phone_number_id": phone_number_id,
+                    "to_number": to_number,
+                },
+                timeout=30.0,
+            )
+            if not resp.is_success:
+                raise ValueError(f"ElevenLabs outbound call failed ({resp.status_code}): {resp.text}")
+            return resp.json()
 
     async def get_signed_url(self, advertisement_id: str) -> str:
         """
@@ -116,8 +177,8 @@ class VoicebotAgentService:
             if resp.status_code not in (200, 204, 404):
                 resp.raise_for_status()
 
-        bot_config.pop("elevenlabs_agent_id", None)
-        ad.bot_config = bot_config
+        new_config = {k: v for k, v in bot_config.items() if k != "elevenlabs_agent_id"}
+        ad.bot_config = new_config
         await self.db.commit()
         logger.info("Deleted ElevenLabs agent %s for ad %s", agent_id, advertisement_id)
         return True

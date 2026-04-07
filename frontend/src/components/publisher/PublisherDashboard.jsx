@@ -314,6 +314,9 @@ export default function PublisherDashboard() {
           onPublish={handlePublish}
           onPreviewAd={setPreviewAd}
           onViewDetail={(id) => navigate(`/publisher/campaign/${id}`)}
+          hostingId={hostingId}
+          hostError={hostError}
+          onHostPage={handleHostPage}
         />
       )}
 
@@ -354,7 +357,7 @@ export default function PublisherDashboard() {
 }
 
 // ─── Overview Tab ─────────────────────────────────────────────────────────────
-function OverviewTab({ approved, published, publishing, publishError, expandedId, onToggle, onPublish, onPreviewAd, onViewDetail }) {
+function OverviewTab({ approved, published, publishing, publishError, expandedId, onToggle, onPublish, onPreviewAd, onViewDetail, hostingId, hostError, onHostPage }) {
   return (
     <div className="space-y-4">
       {publishError && (
@@ -387,6 +390,7 @@ function OverviewTab({ approved, published, publishing, publishError, expandedId
               expanded={expandedId === ad.id} onToggle={() => onToggle(ad.id)}
               publishing={publishing}
               onPublish={onPublish} onPreviewAd={onPreviewAd} onViewDetail={onViewDetail}
+              hostingId={hostingId} hostError={hostError} onHostPage={onHostPage}
             />
           ))
         )}
@@ -405,6 +409,7 @@ function OverviewTab({ approved, published, publishing, publishError, expandedId
               expanded={expandedId === ad.id} onToggle={() => onToggle(ad.id)}
               publishing={publishing}
               onPublish={onPublish} onPreviewAd={onPreviewAd} onViewDetail={onViewDetail}
+              hostingId={hostingId} hostError={hostError} onHostPage={onHostPage}
             />
           ))
         )}
@@ -413,7 +418,7 @@ function OverviewTab({ approved, published, publishing, publishError, expandedId
   );
 }
 
-function CampaignRow({ ad, expanded, onToggle, publishing, onPublish, onPreviewAd, onViewDetail }) {
+function CampaignRow({ ad, expanded, onToggle, publishing, onPublish, onPreviewAd, onViewDetail, hostingId, hostError, onHostPage }) {
   const isLive = ad.status === "published";
   return (
     <div>
@@ -454,13 +459,13 @@ function CampaignRow({ ad, expanded, onToggle, publishing, onPublish, onPreviewA
         </div>
       </div>
       {expanded && (
-        <CampaignDetailPanel ad={ad} onPreviewAd={onPreviewAd} />
+        <CampaignDetailPanel ad={ad} onPreviewAd={onPreviewAd} hostingId={hostingId} hostError={hostError} onHostPage={onHostPage} />
       )}
     </div>
   );
 }
 
-function CampaignDetailPanel({ ad, onPreviewAd }) {
+function CampaignDetailPanel({ ad, onPreviewAd, hostingId, hostError, onHostPage }) {
   const isWebsite = hasType(ad, "website");
   const isAds     = hasType(ad, "ads");
 
@@ -480,7 +485,7 @@ function CampaignDetailPanel({ ad, onPreviewAd }) {
                   <Download size={11} /> Download HTML
                 </a>
                 <button
-                  onClick={() => handleHostPage(ad.id)}
+                  onClick={() => onHostPage(ad.id)}
                   disabled={hostingId === ad.id}
                   className="btn--inline-action--ghost"
                   style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: hostingId === ad.id ? "wait" : "pointer" }}
@@ -673,7 +678,12 @@ function VoicebotConfig({ ad }) {
       };
     } catch (err) {
       cleanupCall(); setCallStatus("idle");
-      setCallError(err.name === "NotAllowedError" ? "Microphone access denied — allow microphone access and try again." : (err.message || "Failed to start session."));
+      if (err.message?.includes("No ElevenLabs agent provisioned")) {
+        setAgentStatus({ provisioned: false });
+        setCallError("Agent is not provisioned — click Provision Agent to set it up.");
+      } else {
+        setCallError(err.name === "NotAllowedError" ? "Microphone access denied — allow microphone access and try again." : (err.message || "Failed to start session."));
+      }
     }
   };
 

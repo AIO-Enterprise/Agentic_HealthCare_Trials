@@ -368,6 +368,13 @@ export const adsAPI = {
   // No auth required — designed for embedded landing page use.
   getVoiceSessionToken: (adId) =>
     request(`/advertisements/${adId}/voice-session/token`),
+
+  // Trigger an outbound phone call to the given number via ElevenLabs/Twilio.
+  requestVoiceCall: (adId, phone) =>
+    request(`/advertisements/${adId}/voice-call/request`, {
+      method: "POST",
+      body: JSON.stringify({ phone }),
+    }),
 };
 
 // ─── M7/M15: Analytics ───────────────────────────────────────────────────────

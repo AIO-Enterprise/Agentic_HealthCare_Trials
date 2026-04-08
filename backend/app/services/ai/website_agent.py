@@ -636,7 +636,7 @@ class WebsiteAgentService:
           '<div style="text-align:center;margin-bottom:20px">' +
             '<div style="font-size:2rem;margin-bottom:6px">&#128222;</div>' +
             '<h3 style="font-size:1.1rem;font-weight:800;margin:0 0 4px;color:#111">Speak to our Staff</h3>' +
-            '<p style="color:#64748b;font-size:0.85rem;margin:0;line-height:1.5">Choose how you\'d like us to reach you.</p>' +
+            '<p style="color:#64748b;font-size:0.85rem;margin:0;line-height:1.5">Choose how you\\'d like us to reach you.</p>' +
           '</div>' +
           '<div style="background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:14px;padding:20px 20px 16px;margin-bottom:16px">' +
             '<p style="font-size:0.78rem;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:#15803d;margin:0 0 4px">&#9889; Call Me Now</p>' +
@@ -861,6 +861,9 @@ class WebsiteAgentService:
     fields: [{{ id: 'ic-phone', label: 'Your Phone Number', type: 'tel' }}],
     submitText: 'Call Me Now \u2192'
   }});
+
+  var voiceCallBtn = findBtn('voice-call-btn', ['call me now', 'instant call', 'call now']);
+  if (voiceCallBtn) voiceCallBtn.addEventListener('click', im.open);
 
   im.submit.addEventListener('click', async function () {{
     var vals = im.collect();

@@ -8,9 +8,65 @@
 
 const API_BASE = import.meta.env.VITE_API_URL || "/api";
 
+// ─── Token refresh helpers ────────────────────────────────────────────────────
+
+function _getTokenExp() {
+  const token = localStorage.getItem("token");
+  if (!token) return null;
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.exp * 1000; // convert to ms
+  } catch { return null; }
+}
+
+let _refreshPromise = null;
+
+async function _refreshToken() {
+  // Deduplicate: if a refresh is already in flight, wait for it.
+  if (_refreshPromise) return _refreshPromise;
+
+  _refreshPromise = (async () => {
+    const token = localStorage.getItem("token");
+    if (!token) throw new Error("No token");
+    const res = await fetch(`${API_BASE}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      // Refresh failed — clear session and redirect to login
+      localStorage.removeItem("token");
+      window.dispatchEvent(new CustomEvent("auth:expired"));
+      throw new Error("Session expired");
+    }
+    const data = await res.json();
+    localStorage.setItem("token", data.access_token);
+    return data.access_token;
+  })().finally(() => { _refreshPromise = null; });
+
+  return _refreshPromise;
+}
+
+// Proactively refresh if token expires within 10 minutes.
+// Call this from app boot and optionally on a timer.
+export async function ensureFreshToken() {
+  const exp = _getTokenExp();
+  if (!exp) return;
+  if (exp - Date.now() < 10 * 60 * 1000) {
+    await _refreshToken().catch(() => {});
+  }
+}
+
 // ─── Helper ──────────────────────────────────────────────────────────────────
 
 async function request(endpoint, options = {}) {
+  // Proactively refresh if token will expire within 10 minutes
+  if (endpoint !== "/auth/refresh" && endpoint !== "/auth/login") {
+    const exp = _getTokenExp();
+    if (exp && exp > Date.now() && (exp - Date.now()) < 10 * 60 * 1000) {
+      await _refreshToken().catch(() => {});
+    }
+  }
+
   const token = localStorage.getItem("token");
   const headers = {
     "Content-Type": "application/json",
@@ -22,6 +78,25 @@ async function request(endpoint, options = {}) {
     ...options,
     headers,
   });
+
+  // On 401, attempt one token refresh then retry
+  if (res.status === 401 && endpoint !== "/auth/refresh" && endpoint !== "/auth/login") {
+    try {
+      const newToken = await _refreshToken();
+      const retryRes = await fetch(`${API_BASE}${endpoint}`, {
+        ...options,
+        headers: { ...headers, Authorization: `Bearer ${newToken}` },
+      });
+      if (!retryRes.ok) {
+        const err = await retryRes.json().catch(() => ({ detail: retryRes.statusText }));
+        throw new Error(err.detail || `HTTP ${retryRes.status}: ${retryRes.statusText}`);
+      }
+      if (retryRes.status === 204 || retryRes.headers.get("content-length") === "0") return null;
+      return retryRes.json();
+    } catch {
+      throw new Error("Session expired. Please log in again.");
+    }
+  }
 
   if (!res.ok) {
     // Token expired or invalid — clear session and redirect to login
@@ -59,6 +134,9 @@ export const authAPI = {
       method: "POST",
       body: JSON.stringify({ email, password, company, role }),
     }),
+
+  // Re-issue a fresh token without requiring the user to re-enter credentials.
+  refresh: () => request("/auth/refresh", { method: "POST" }),
 };
 
 // ─── M3: Onboarding ─────────────────────────────────────────────────────────
@@ -375,6 +453,30 @@ export const adsAPI = {
       method: "POST",
       body: JSON.stringify({ phone }),
     }),
+};
+
+// ─── Platform Connections (Meta OAuth) ───────────────────────────────────────
+
+export const platformConnectionsAPI = {
+  // Returns { url } — open in a popup to start OAuth
+  getOAuthUrl: (platform) => request(`/platform-connections/${platform}/oauth-url`),
+
+  // List stored connections for this company
+  list: () => request("/platform-connections/"),
+
+  // Fetch ad accounts + pages available under the stored Meta token
+  getMetaAccounts: () => request("/platform-connections/meta/accounts"),
+
+  // Save selected ad account and/or page
+  updateMeta: (data) =>
+    request("/platform-connections/meta", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  // Remove Meta connection
+  disconnectMeta: () =>
+    request("/platform-connections/meta", { method: "DELETE" }),
 };
 
 // ─── M7/M15: Analytics ───────────────────────────────────────────────────────

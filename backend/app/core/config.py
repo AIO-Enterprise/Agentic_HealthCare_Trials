@@ -28,7 +28,7 @@ class Settings(BaseSettings):
 
     # JWT
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRE_MINUTES: int = 480  # 8 hours — generation pipelines can run for a long time
+    JWT_EXPIRE_MINUTES: int = 1440   # 24 hours — proactively refreshed by frontend
 
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./marketing_platform.db"
@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     # Standard OpenAI fallback
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_IMAGE_MODEL: str = "gpt-image-1.5"
+
+    # Meta for Developers – OAuth credentials for Facebook/Instagram ad publishing
+    # Register your app at https://developers.facebook.com and add the Marketing API product.
+    META_APP_ID: Optional[str] = None
+    META_APP_SECRET: Optional[str] = None
+    META_OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/platform-connections/meta/callback"
 
     # ElevenLabs
     ELEVENLABS_API_KEY: Optional[str] = None

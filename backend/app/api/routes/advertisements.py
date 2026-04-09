@@ -503,12 +503,12 @@ async def distribute_to_meta(
     Publish the campaign's generated ad creatives to Meta (Facebook/Instagram)
     via the Marketing API.
 
+    Credentials (access_token, ad_account_id, page_id) are read from the stored
+    PlatformConnection for this company — connect once via OAuth in Platform Settings.
+
     Expected body:
       platform          : "meta"
       config:
-        access_token       : Meta User Access Token  (ads_management permission)
-        ad_account_id      : act_XXXXXXXXXX
-        page_id            : Facebook Page ID  (required for ad creatives)
         destination_url    : URL the ad clicks lead to
         daily_budget       : daily budget in USD  (e.g. 10.0)
         targeting_countries: comma-separated ISO country codes  (e.g. "US,GB")
@@ -518,6 +518,7 @@ async def distribute_to_meta(
     Meta Ads Manager before activating.
     """
     from app.services.meta_ads_service import MetaAdsService
+    from app.models.models import PlatformConnection
 
     platform = (body.get("platform") or "").lower()
     if platform != "meta":
@@ -525,13 +526,24 @@ async def distribute_to_meta(
 
     cfg = body.get("config") or {}
 
-    access_token       = cfg.get("access_token", "").strip()
-    ad_account_id      = cfg.get("ad_account_id", "").strip()
-    page_id            = cfg.get("page_id", "").strip()
     destination_url    = cfg.get("destination_url", "").strip()
     daily_budget_str   = str(cfg.get("daily_budget", "10")).strip()
     countries_str      = cfg.get("targeting_countries", "US").strip()
     selected_creatives = cfg.get("selected_creatives") or []
+
+    # ── Load stored platform connection ──────────────────────────────────────
+    conn_result = await db.execute(
+        select(PlatformConnection).where(
+            PlatformConnection.company_id == user.company_id,
+            PlatformConnection.platform == "meta",
+        )
+    )
+    conn = conn_result.scalar_one_or_none()
+
+    # Allow manual override in config for backwards-compatibility / testing
+    access_token  = cfg.get("access_token",  "").strip() or (conn.access_token  if conn else "")
+    ad_account_id = cfg.get("ad_account_id", "").strip() or (conn.ad_account_id if conn else "")
+    page_id       = cfg.get("page_id",       "").strip() or (conn.page_id       if conn else "")
 
     # ── Validate required fields ──────────────────────────────────────────────
     missing = [
@@ -543,10 +555,12 @@ async def distribute_to_meta(
         ] if not val
     ]
     if missing:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Missing required Meta config fields: {', '.join(missing)}",
-        )
+        detail = f"Missing required Meta config fields: {', '.join(missing)}"
+        if not conn:
+            detail += ". Connect your Meta account in Platform Settings first."
+        elif not conn.ad_account_id or not conn.page_id:
+            detail += ". Select an Ad Account and Facebook Page in Platform Settings."
+        raise HTTPException(status_code=422, detail=detail)
 
     try:
         daily_budget = float(daily_budget_str)

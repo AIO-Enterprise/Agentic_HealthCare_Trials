@@ -51,6 +51,90 @@ class MetaAdsService:
     async def close(self):
         pass
 
+    # ─── OAuth helpers (static — no ad account needed) ────────────────────────
+
+    @staticmethod
+    def exchange_code_for_token(code: str, app_id: str, app_secret: str, redirect_uri: str) -> str:
+        """Exchange an OAuth authorisation code for a short-lived user access token (2 hr)."""
+        resp = requests.get(
+            f"{META_BASE_URL}/oauth/access_token",
+            params={
+                "client_id": app_id,
+                "client_secret": app_secret,
+                "redirect_uri": redirect_uri,
+                "code": code,
+            },
+            timeout=30,
+        )
+        body = resp.json()
+        if "error" in body:
+            raise RuntimeError(f"Code exchange failed: {body['error'].get('message')}")
+        return body["access_token"]
+
+    @staticmethod
+    def exchange_for_long_lived_token(short_lived_token: str, app_id: str, app_secret: str) -> tuple:
+        """
+        Exchange a short-lived token for a long-lived user access token (~60 days).
+        Returns (access_token, expires_in_seconds).
+        Long-lived tokens auto-renew when used within the 60-day window.
+        """
+        resp = requests.get(
+            f"{META_BASE_URL}/oauth/access_token",
+            params={
+                "grant_type": "fb_exchange_token",
+                "client_id": app_id,
+                "client_secret": app_secret,
+                "fb_exchange_token": short_lived_token,
+            },
+            timeout=30,
+        )
+        body = resp.json()
+        if "error" in body:
+            raise RuntimeError(f"Long-lived token exchange failed: {body['error'].get('message')}")
+        return body["access_token"], int(body.get("expires_in", 5183944))  # default ~60 days
+
+    @staticmethod
+    def fetch_me(access_token: str) -> dict:
+        """Fetch basic profile info (id, name) for the token owner."""
+        resp = requests.get(
+            f"{META_BASE_URL}/me",
+            params={"fields": "id,name", "access_token": access_token},
+            timeout=30,
+        )
+        body = resp.json()
+        if "error" in body:
+            raise RuntimeError(body["error"].get("message"))
+        return body
+
+    @staticmethod
+    def fetch_ad_accounts(access_token: str) -> list:
+        """List all ad accounts accessible to this user."""
+        resp = requests.get(
+            f"{META_BASE_URL}/me/adaccounts",
+            params={
+                "fields": "id,name,account_id,currency,account_status",
+                "access_token": access_token,
+            },
+            timeout=30,
+        )
+        body = resp.json()
+        if "error" in body:
+            raise RuntimeError(body["error"].get("message"))
+        return body.get("data", [])
+
+    @staticmethod
+    def fetch_pages(access_token: str) -> list:
+        """List Facebook pages managed by this user."""
+        resp = requests.get(
+            f"{META_BASE_URL}/me/accounts",
+            params={"fields": "id,name,category", "access_token": access_token},
+            timeout=30,
+        )
+        body = resp.json()
+        if "error" in body:
+            raise RuntimeError(body["error"].get("message"))
+        return body.get("data", [])
+
     # ─── Low-level helpers ─────────────────────────────────────────────────────
 
     def _url(self, path: str) -> str:

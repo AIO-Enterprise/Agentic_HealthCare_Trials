@@ -10,7 +10,7 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { authAPI, brandKitAPI } from "../services/api";
+import { authAPI, brandKitAPI, ensureFreshToken } from "../services/api";
 import { applyBrandTheme, resetBrandTheme, isDefaultThemeOverrideActive, getCachedBrandTheme } from "../services/theme";
 
 const AuthContext = createContext(null);
@@ -26,6 +26,10 @@ export function AuthProvider({ children }) {
     if (token && stored) {
       try {
         setUser(JSON.parse(stored));
+
+        // Proactively refresh the JWT if it's close to expiry (< 10 min).
+        // Runs silently in the background — doesn't block the UI.
+        ensureFreshToken().catch(() => {});
 
         if (!isDefaultThemeOverrideActive()) {
           // 1. Restore cached theme instantly — zero flash on refresh.
@@ -47,6 +51,18 @@ export function AuthProvider({ children }) {
     }
 
     setLoading(false);
+  }, []);
+
+  // Listen for auth:expired events dispatched by the token refresh helper
+  // when a refresh call fails (e.g. token revoked server-side).
+  useEffect(() => {
+    const handleExpired = () => {
+      localStorage.clear();
+      resetBrandTheme({ clearFlag: true });
+      setUser(null);
+    };
+    window.addEventListener("auth:expired", handleExpired);
+    return () => window.removeEventListener("auth:expired", handleExpired);
   }, []);
 
   const login = useCallback(async (email, password, company, role) => {

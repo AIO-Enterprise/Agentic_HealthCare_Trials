@@ -78,6 +78,11 @@ async def init_db():
                 "ALTER TABLE advertisements ADD COLUMN trial_end_date DATE;",
                 "ALTER TABLE advertisements ADD COLUMN hosted_url VARCHAR(1024);",
                 "ALTER TABLE companies ADD COLUMN locations JSON;",
+                # platform_connections: new table handled by create_all; these cover
+                # any columns added after the initial table creation on existing DBs.
+                "ALTER TABLE platform_connections ADD COLUMN meta_user_id VARCHAR(128);",
+                "ALTER TABLE platform_connections ADD COLUMN ad_account_name VARCHAR(256);",
+                "ALTER TABLE platform_connections ADD COLUMN page_name VARCHAR(256);",
             ]
             for stmt in _sqlite_cols:
                 try:
@@ -114,6 +119,12 @@ async def init_db():
             "ALTER TABLE advertisements ADD COLUMN IF NOT EXISTS trial_end_date DATE;")
         await _add_column_if_missing(conn,
             "ALTER TABLE advertisements ADD COLUMN IF NOT EXISTS hosted_url VARCHAR(1024);")
+        await _add_column_if_missing(conn,
+            "ALTER TABLE platform_connections ADD COLUMN IF NOT EXISTS meta_user_id VARCHAR(128);")
+        await _add_column_if_missing(conn,
+            "ALTER TABLE platform_connections ADD COLUMN IF NOT EXISTS ad_account_name VARCHAR(256);")
+        await _add_column_if_missing(conn,
+            "ALTER TABLE platform_connections ADD COLUMN IF NOT EXISTS page_name VARCHAR(256);")
 
         # chat_sessions unique index (safe to re-run — uses IF NOT EXISTS)
         try:

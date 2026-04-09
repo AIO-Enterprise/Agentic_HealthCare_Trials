@@ -13,12 +13,13 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { PageWithSidebar, SectionCard, MetricSummaryCard, CampaignStatusBadge } from "../shared/Layout";
-import { adsAPI, analyticsAPI } from "../../services/api";
+import { adsAPI, analyticsAPI, platformConnectionsAPI } from "../../services/api";
 import {
   Send, Globe, Image, BarChart3, Sparkles,
   CheckCircle, Rocket, ChevronDown, ChevronUp, Zap, X, ImageOff,
   Share2, UploadCloud, ExternalLink, Download, Eye, AlertCircle,
-  CheckCircle2, Loader2, Mic, PhoneCall, PhoneOff, Volume2, Radio, MessageSquare, Copy,
+  CheckCircle2, Loader2, Mic, PhoneCall, PhoneOff, Volume2, Radio, MessageSquare,
+  Link2, Link2Off, Settings, RefreshCw, ChevronDown as ChevDown, SlidersHorizontal,
 } from "lucide-react";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -80,44 +81,24 @@ const DEPLOY_PLATFORMS = [
 
 // ─── Social distribution platform definitions ────────────────────────────────
 // Only Meta/Instagram is active. Other platforms are shown as "Coming soon".
+// Credentials (access_token, ad_account_id, page_id) come from the stored
+// PlatformConnection — they are no longer entered per-publish.
 const SOCIAL_PLATFORMS = {
   "Meta/Instagram": {
     id: "meta",
     active: true,
+    usesOAuth: true,   // credentials come from Platform Settings, not typed in here
     fields: [
-      { key: "access_token",        label: "Access Token",            type: "password", placeholder: "EAA…",            required: true  },
-      { key: "ad_account_id",       label: "Ad Account ID",           type: "text",     placeholder: "act_…",           required: true  },
-      { key: "page_id",             label: "Facebook Page ID",        type: "text",     placeholder: "123456789",       required: true  },
-      { key: "destination_url",     label: "Destination URL",         type: "text",     placeholder: "https://…",       required: true  },
-      { key: "daily_budget",        label: "Daily Budget (USD)",      type: "text",     placeholder: "10.00",           required: true  },
-      { key: "targeting_countries", label: "Target Countries",        type: "text",     placeholder: "US, GB, CA",      required: false },
+      { key: "destination_url",     label: "Destination URL",     type: "text", placeholder: "https://…",  required: true  },
+      { key: "daily_budget",        label: "Daily Budget (USD)",  type: "text", placeholder: "10.00",       required: true  },
+      { key: "targeting_countries", label: "Target Countries",    type: "text", placeholder: "US, GB, CA",  required: false },
     ],
   },
-  "Google Ads": {
-    id: "google_ads",
-    active: false,
-    fields: [],
-  },
-  "LinkedIn": {
-    id: "linkedin",
-    active: false,
-    fields: [],
-  },
-  "YouTube": {
-    id: "youtube",
-    active: false,
-    fields: [],
-  },
-  "Twitter/X": {
-    id: "twitter",
-    active: false,
-    fields: [],
-  },
-  "TikTok": {
-    id: "tiktok",
-    active: false,
-    fields: [],
-  },
+  "Google Ads": { id: "google_ads", active: false, fields: [] },
+  "LinkedIn":   { id: "linkedin",   active: false, fields: [] },
+  "YouTube":    { id: "youtube",    active: false, fields: [] },
+  "Twitter/X":  { id: "twitter",    active: false, fields: [] },
+  "TikTok":     { id: "tiktok",     active: false, fields: [] },
 };
 
 // ─── Tab ↔ Path maps ──────────────────────────────────────────────────────────
@@ -125,12 +106,14 @@ const PATH_TO_TAB = {
   "/publisher/deploy":      "deploy",
   "/publisher/distribute":  "distribute",
   "/publisher/analytics":   "analytics",
+  "/publisher/settings":    "settings",
 };
 const TAB_TO_PATH = {
   overview:    "/publisher",
   deploy:      "/publisher/deploy",
   distribute:  "/publisher/distribute",
   analytics:   "/publisher/analytics",
+  settings:    "/publisher/settings",
 };
 
 const TABS = [
@@ -138,6 +121,7 @@ const TABS = [
   { key: "deploy",     label: "Deploy",      icon: Rocket },
   { key: "distribute", label: "Distribute",  icon: Share2 },
   { key: "analytics",  label: "Analytics",   icon: BarChart3 },
+  { key: "settings",   label: "Settings",    icon: SlidersHorizontal },
 ];
 
 // ─── Root component ───────────────────────────────────────────────────────────
@@ -157,19 +141,35 @@ export default function PublisherDashboard() {
   const [previewAd,    setPreviewAd]   = useState(null);
 
   // Deploy state
-  const [deployExpanded, setDeployExpanded] = useState(null); // { adId, platformId }
-  const [deployForms,    setDeployForms]    = useState({});   // key: `${adId}_${platformId}`
-  const [deployStatus,   setDeployStatus]   = useState({});   // key → { status, url, error }
+  const [deployExpanded, setDeployExpanded] = useState(null);
+  const [deployForms,    setDeployForms]    = useState({});
+  const [deployStatus,   setDeployStatus]   = useState({});
 
   // Distribute state
-  const [distExpanded, setDistExpanded] = useState(null); // { adId, platformId }
+  const [distExpanded, setDistExpanded] = useState(null);
   const [distForms,    setDistForms]    = useState({});
   const [distStatus,   setDistStatus]   = useState({});
+
+  // Platform connections (OAuth)
+  const [metaConnection,  setMetaConnection]  = useState(null);   // stored connection or null
+  const [metaAccounts,    setMetaAccounts]    = useState(null);   // { ad_accounts, pages }
+  const [connectingMeta,  setConnectingMeta]  = useState(false);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
 
   const activeTab = PATH_TO_TAB[location.pathname] || "overview";
 
   useEffect(() => {
     adsAPI.list().then(setAds).catch(console.error).finally(() => setLoading(false));
+  }, []);
+
+  // Load stored Meta connection on mount
+  useEffect(() => {
+    platformConnectionsAPI.list()
+      .then((connections) => {
+        const meta = connections.find((c) => c.platform === "meta") || null;
+        setMetaConnection(meta);
+      })
+      .catch(console.error);
   }, []);
 
   const approved  = ads.filter((a) => a.status === "approved");
@@ -262,6 +262,81 @@ export default function PublisherDashboard() {
     }
   };
 
+  // ── Meta OAuth connect ────────────────────────────────────────────────────
+  const handleConnectMeta = async () => {
+    setConnectingMeta(true);
+    try {
+      const { url } = await platformConnectionsAPI.getOAuthUrl("meta");
+      const popup = window.open(url, "meta_oauth", "width=620,height=700,scrollbars=yes,resizable=yes");
+
+      const onMessage = async (event) => {
+        if (!event.data || !["meta_oauth_success", "meta_oauth_error"].includes(event.data.type)) return;
+        window.removeEventListener("message", onMessage);
+        clearInterval(pollClosed);
+
+        if (event.data.type === "meta_oauth_success") {
+          // Refresh connection and load account/page lists
+          const connections = await platformConnectionsAPI.list();
+          const meta = connections.find((c) => c.platform === "meta") || null;
+          setMetaConnection(meta);
+          if (meta) {
+            setLoadingAccounts(true);
+            try {
+              const accounts = await platformConnectionsAPI.getMetaAccounts();
+              setMetaAccounts(accounts);
+            } catch (e) { console.error(e); }
+            finally { setLoadingAccounts(false); }
+          }
+        } else {
+          alert("Failed to connect Meta account. Please try again.");
+        }
+        setConnectingMeta(false);
+      };
+
+      window.addEventListener("message", onMessage);
+
+      // Fallback: if popup closed without sending a message
+      const pollClosed = setInterval(() => {
+        if (popup && popup.closed) {
+          clearInterval(pollClosed);
+          window.removeEventListener("message", onMessage);
+          setConnectingMeta(false);
+        }
+      }, 600);
+
+    } catch (err) {
+      alert(err.message);
+      setConnectingMeta(false);
+    }
+  };
+
+  const handleDisconnectMeta = async () => {
+    if (!window.confirm("Disconnect your Meta account? Stored credentials will be removed.")) return;
+    await platformConnectionsAPI.disconnectMeta();
+    setMetaConnection(null);
+    setMetaAccounts(null);
+  };
+
+  const handleLoadMetaAccounts = async () => {
+    if (metaAccounts) return; // already loaded
+    setLoadingAccounts(true);
+    try {
+      const accounts = await platformConnectionsAPI.getMetaAccounts();
+      setMetaAccounts(accounts);
+    } catch (err) { alert(err.message); }
+    finally { setLoadingAccounts(false); }
+  };
+
+  const handleSelectAdAccount = async (account) => {
+    await platformConnectionsAPI.updateMeta({ ad_account_id: account.id, ad_account_name: account.name });
+    setMetaConnection((p) => ({ ...p, ad_account_id: account.id, ad_account_name: account.name }));
+  };
+
+  const handleSelectPage = async (page) => {
+    await platformConnectionsAPI.updateMeta({ page_id: page.id, page_name: page.name });
+    setMetaConnection((p) => ({ ...p, page_id: page.id, page_name: page.name }));
+  };
+
   if (loading) return (
     <PageWithSidebar>
       <div className="flex items-center justify-center py-40">
@@ -344,11 +419,35 @@ export default function PublisherDashboard() {
           onUpdateForm={updateDistForm}
           onDistribute={handleDistribute}
           onPreviewAd={setPreviewAd}
+          metaConnection={metaConnection}
+          metaAccounts={metaAccounts}
+          connectingMeta={connectingMeta}
+          loadingAccounts={loadingAccounts}
+          onConnectMeta={handleConnectMeta}
+          onDisconnectMeta={handleDisconnectMeta}
+          onLoadMetaAccounts={handleLoadMetaAccounts}
+          onSelectAdAccount={handleSelectAdAccount}
+          onSelectPage={handleSelectPage}
         />
       )}
 
       {/* ── Analytics ── */}
       {activeTab === "analytics" && <PublisherAnalytics ads={published} />}
+
+      {/* ── Settings ── */}
+      {activeTab === "settings" && (
+        <SettingsTab
+          metaConnection={metaConnection}
+          metaAccounts={metaAccounts}
+          connectingMeta={connectingMeta}
+          loadingAccounts={loadingAccounts}
+          onConnectMeta={handleConnectMeta}
+          onDisconnectMeta={handleDisconnectMeta}
+          onLoadMetaAccounts={handleLoadMetaAccounts}
+          onSelectAdAccount={handleSelectAdAccount}
+          onSelectPage={handleSelectPage}
+        />
+      )}
 
       {/* Ad Preview Modal */}
       {previewAd && <AdPreviewModal ad={previewAd} onClose={() => setPreviewAd(null)} />}
@@ -1260,117 +1359,362 @@ function DeployConfigForm({ platform, formData, status, onChange, onDeploy }) {
   );
 }
 
-// ─── Distribute Tab ───────────────────────────────────────────────────────────
-function DistributeTab({ ads, distExpanded, distForms, distStatus, onSelectPlatform, onUpdateForm, onDistribute, onPreviewAd }) {
-  const distributable = ads.filter(
-    (a) => (a.status === "approved" || a.status === "published") && a.output_files?.length > 0
-  );
+// ─── Platform Settings Card ───────────────────────────────────────────────────
+function MetaPlatformSettings({
+  connection, accounts, connecting, loadingAccounts,
+  onConnect, onDisconnect, onLoadAccounts, onSelectAdAccount, onSelectPage,
+}) {
+  const [showAdAccounts, setShowAdAccounts] = useState(false);
+  const [showPages,      setShowPages]      = useState(false);
 
-  if (distributable.length === 0) {
-    return (
-      <SectionCard title="Distribute Ad Creatives" subtitle="No distributable ad campaigns yet">
-        <div className="flex flex-col items-center py-12 gap-3">
-          <Share2 size={36} style={{ color: "var(--color-sidebar-text)", opacity: 0.4 }} />
-          <p className="text-sm" style={{ color: "var(--color-sidebar-text)" }}>
-            Generate ad creatives for an approved campaign to distribute them here
-          </p>
-        </div>
-      </SectionCard>
-    );
-  }
+  const daysTilExpiry = connection?.token_expires_at
+    ? Math.max(0, Math.round((new Date(connection.token_expires_at) - Date.now()) / 86400000))
+    : null;
+
+  const pillStyle = (color) => ({
+    display: "inline-flex", alignItems: "center", gap: 4,
+    padding: "2px 10px", borderRadius: 999, fontSize: "0.7rem", fontWeight: 700,
+    backgroundColor: `rgba(${color},0.12)`, color: `rgb(${color})`,
+  });
+
+  const dropdownStyle = {
+    position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 50,
+    border: "1px solid var(--color-card-border)", borderRadius: "8px",
+    backgroundColor: "var(--color-card-bg)", boxShadow: "0 4px 16px rgba(0,0,0,.12)",
+    maxHeight: "200px", overflowY: "auto",
+  };
+
+  const selectorBtnStyle = {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    width: "100%", padding: "7px 10px", borderRadius: "7px", fontSize: "0.8rem",
+    border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-input-bg)",
+    color: "var(--color-input-text)", cursor: "pointer", textAlign: "left",
+  };
 
   return (
-    <div className="space-y-4">
-      {distributable.map((ad) => {
-        const campaignPlatforms = (ad.platforms || []).filter((p) => SOCIAL_PLATFORMS[p]);
+    <SectionCard
+      title="Platform Settings"
+      subtitle="Connect your ad accounts once — credentials are stored securely and reused for every publish"
+    >
+      {/* ── Meta/Instagram row ── */}
+      <div style={{
+        display: "flex", alignItems: "flex-start", gap: 16, flexWrap: "wrap",
+        padding: "16px", borderRadius: "10px",
+        border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)",
+      }}>
+        {/* Left: status + connect/disconnect */}
+        <div style={{ flex: "0 0 auto", minWidth: 180 }}>
+          <p style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--color-input-text)", marginBottom: 6 }}>
+            Meta / Instagram
+          </p>
 
-        return (
-          <SectionCard
-            key={ad.id}
-            title={ad.title}
-            subtitle={`${ad.output_files.length} creative${ad.output_files.length !== 1 ? "s" : ""} ready · ${ad.platforms?.join(", ") || "no platforms configured"}`}
-          >
-            {/* Creative strip header */}
-            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
-              <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)", flex: 1 }}>
-                Ad Creatives
-              </p>
-              <button className="btn--inline-action--ghost" onClick={() => onPreviewAd(ad)}>
-                <Eye size={11} /> Preview All
-              </button>
+          {connection ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <span style={pillStyle("34,197,94")}>
+                <Link2 size={10} /> Connected
+              </span>
+
+              {connection.expires_soon && (
+                <span style={pillStyle("234,179,8")}>
+                  <AlertCircle size={10} /> Expires in {daysTilExpiry}d — reconnect soon
+                </span>
+              )}
+              {!connection.expires_soon && daysTilExpiry !== null && (
+                <span style={{ fontSize: "0.68rem", color: "var(--color-muted)" }}>
+                  Token valid for ~{daysTilExpiry} days
+                </span>
+              )}
+
+              <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                <button
+                  className="btn--inline-action--ghost"
+                  onClick={onConnect}
+                  disabled={connecting}
+                  title="Refresh OAuth token"
+                >
+                  <RefreshCw size={10} style={connecting ? { animation: "spin 1s linear infinite" } : {}} />
+                  Reconnect
+                </button>
+                <button className="btn--inline-action--ghost" onClick={onDisconnect} style={{ color: "#ef4444" }}>
+                  <Link2Off size={10} /> Disconnect
+                </button>
+              </div>
             </div>
+          ) : (
+            <div>
+              <span style={pillStyle("156,163,175")}>
+                <Link2Off size={10} /> Not connected
+              </span>
+              <div style={{ marginTop: 10 }}>
+                <button
+                  className="btn--accent"
+                  onClick={onConnect}
+                  disabled={connecting}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.8rem" }}
+                >
+                  {connecting
+                    ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />
+                    : <Link2 size={12} />}
+                  {connecting ? "Opening Facebook…" : "Connect Meta Account"}
+                </button>
+                <p style={{ fontSize: "0.68rem", color: "var(--color-muted)", marginTop: 6 }}>
+                  Opens Facebook login in a popup. No developer account needed.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
 
-            {/* Creative thumbnail strip */}
-            <div style={{ display: "flex", gap: "8px", marginBottom: "20px", overflowX: "auto", paddingBottom: "4px" }}>
-              {ad.output_files.slice(0, 6).map((c, i) => (
-                <div key={i} style={{
-                  width: "80px", height: "60px", borderRadius: "6px", flexShrink: 0,
-                  border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)",
-                  overflow: "hidden",
-                }}>
-                  {c.image_url
-                    ? <img src={c.image_url} alt={c.headline} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <Image size={18} style={{ color: "var(--color-sidebar-text)", opacity: 0.35 }} />
-                      </div>
+        {/* Right: account + page selectors (only shown when connected) */}
+        {connection && (
+          <div style={{ flex: 1, display: "flex", gap: 12, flexWrap: "wrap", minWidth: 260 }}>
+            {/* Ad Account selector */}
+            <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
+              <label style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--color-sidebar-text)", display: "block", marginBottom: 5 }}>
+                Ad Account
+              </label>
+              <button
+                style={selectorBtnStyle}
+                onClick={() => {
+                  setShowAdAccounts((v) => !v);
+                  setShowPages(false);
+                  if (!accounts) onLoadAccounts();
+                }}
+              >
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {connection.ad_account_name || connection.ad_account_id || "Select ad account…"}
+                </span>
+                <ChevDown size={12} style={{ flexShrink: 0, marginLeft: 4 }} />
+              </button>
+              {showAdAccounts && (
+                <div style={dropdownStyle}>
+                  {loadingAccounts
+                    ? <div style={{ padding: "12px", textAlign: "center" }}><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /></div>
+                    : accounts?.ad_accounts?.length
+                      ? accounts.ad_accounts.map((acc) => (
+                          <button
+                            key={acc.id}
+                            onClick={() => { onSelectAdAccount(acc); setShowAdAccounts(false); }}
+                            style={{ display: "block", width: "100%", padding: "9px 12px", textAlign: "left", fontSize: "0.8rem", color: "var(--color-input-text)", background: "none", border: "none", cursor: "pointer", borderBottom: "1px solid var(--color-card-border)" }}
+                          >
+                            <span style={{ fontWeight: 600 }}>{acc.name}</span>
+                            <span style={{ fontSize: "0.7rem", color: "var(--color-muted)", marginLeft: 6 }}>{acc.id}</span>
+                          </button>
+                        ))
+                      : <p style={{ padding: "10px 12px", fontSize: "0.78rem", color: "var(--color-muted)" }}>No ad accounts found</p>
                   }
-                </div>
-              ))}
-              {ad.output_files.length > 6 && (
-                <div style={{
-                  width: "80px", height: "60px", borderRadius: "6px", flexShrink: 0,
-                  border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                }}>
-                  <span style={{ fontSize: "0.75rem", color: "var(--color-sidebar-text)" }}>+{ad.output_files.length - 6}</span>
                 </div>
               )}
             </div>
 
-            {/* Campaign's own platforms */}
-            {/* All platforms — campaign platforms first, then the rest */}
-            <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)", marginBottom: "10px" }}>
-              Distribute to
+            {/* Page selector */}
+            <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
+              <label style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--color-sidebar-text)", display: "block", marginBottom: 5 }}>
+                Facebook Page
+              </label>
+              <button
+                style={selectorBtnStyle}
+                onClick={() => {
+                  setShowPages((v) => !v);
+                  setShowAdAccounts(false);
+                  if (!accounts) onLoadAccounts();
+                }}
+              >
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {connection.page_name || connection.page_id || "Select page…"}
+                </span>
+                <ChevDown size={12} style={{ flexShrink: 0, marginLeft: 4 }} />
+              </button>
+              {showPages && (
+                <div style={dropdownStyle}>
+                  {loadingAccounts
+                    ? <div style={{ padding: "12px", textAlign: "center" }}><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /></div>
+                    : accounts?.pages?.length
+                      ? accounts.pages.map((pg) => (
+                          <button
+                            key={pg.id}
+                            onClick={() => { onSelectPage(pg); setShowPages(false); }}
+                            style={{ display: "block", width: "100%", padding: "9px 12px", textAlign: "left", fontSize: "0.8rem", color: "var(--color-input-text)", background: "none", border: "none", cursor: "pointer", borderBottom: "1px solid var(--color-card-border)" }}
+                          >
+                            <span style={{ fontWeight: 600 }}>{pg.name}</span>
+                            {pg.category && <span style={{ fontSize: "0.7rem", color: "var(--color-muted)", marginLeft: 6 }}>{pg.category}</span>}
+                          </button>
+                        ))
+                      : <p style={{ padding: "10px 12px", fontSize: "0.78rem", color: "var(--color-muted)" }}>No pages found</p>
+                  }
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </SectionCard>
+  );
+}
+
+// ─── Settings Tab ─────────────────────────────────────────────────────────────
+function SettingsTab({
+  metaConnection, metaAccounts, connectingMeta, loadingAccounts,
+  onConnectMeta, onDisconnectMeta, onLoadMetaAccounts, onSelectAdAccount, onSelectPage,
+}) {
+  return (
+    <div className="space-y-4">
+      <MetaPlatformSettings
+        connection={metaConnection}
+        accounts={metaAccounts}
+        connecting={connectingMeta}
+        loadingAccounts={loadingAccounts}
+        onConnect={onConnectMeta}
+        onDisconnect={onDisconnectMeta}
+        onLoadAccounts={onLoadMetaAccounts}
+        onSelectAdAccount={onSelectAdAccount}
+        onSelectPage={onSelectPage}
+      />
+    </div>
+  );
+}
+
+// ─── Distribute Tab ───────────────────────────────────────────────────────────
+function DistributeTab({
+  ads, distExpanded, distForms, distStatus,
+  onSelectPlatform, onUpdateForm, onDistribute, onPreviewAd,
+  metaConnection, metaAccounts, connectingMeta, loadingAccounts,
+  onConnectMeta, onDisconnectMeta, onLoadMetaAccounts,
+  onSelectAdAccount, onSelectPage,
+}) {
+  const navigate = useNavigate();
+  const distributable = ads.filter(
+    (a) => (a.status === "approved" || a.status === "published") && a.output_files?.length > 0
+  );
+
+  return (
+    <div className="space-y-4">
+      {/* Compact connection status banner — full config lives in Settings tab */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+        padding: "12px 16px", borderRadius: 10,
+        border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-card-bg)",
+      }}>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, minWidth: 200 }}>
+          {metaConnection ? (
+            <>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.75rem", fontWeight: 700, color: "#16a34a", backgroundColor: "rgba(34,197,94,0.1)", padding: "2px 10px", borderRadius: 999 }}>
+                <Link2 size={10} /> Meta Connected
+              </span>
+              {metaConnection.ad_account_name && (
+                <span style={{ fontSize: "0.75rem", color: "var(--color-muted)" }}>
+                  {metaConnection.ad_account_name} · {metaConnection.page_name || "no page selected"}
+                </span>
+              )}
+              {(!metaConnection.ad_account_id || !metaConnection.page_id) && (
+                <span style={{ fontSize: "0.73rem", color: "#ca8a04", fontWeight: 600 }}>
+                  — select an ad account &amp; page in Settings
+                </span>
+              )}
+            </>
+          ) : (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.75rem", fontWeight: 700, color: "var(--color-muted)", backgroundColor: "var(--color-page-bg)", padding: "2px 10px", borderRadius: 999 }}>
+              <Link2Off size={10} /> Meta not connected
+            </span>
+          )}
+        </div>
+        <button
+          onClick={() => navigate("/publisher/settings")}
+          className="btn--inline-action--ghost"
+          style={{ fontSize: "0.78rem", display: "inline-flex", alignItems: "center", gap: 5 }}
+        >
+          <SlidersHorizontal size={11} /> Platform Settings
+        </button>
+      </div>
+
+      {distributable.length === 0 ? (
+        <SectionCard title="Distribute Ad Creatives" subtitle="No distributable ad campaigns yet">
+          <div className="flex flex-col items-center py-12 gap-3">
+            <Share2 size={36} style={{ color: "var(--color-sidebar-text)", opacity: 0.4 }} />
+            <p className="text-sm" style={{ color: "var(--color-sidebar-text)" }}>
+              Generate ad creatives for an approved campaign to distribute them here
             </p>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "8px", marginBottom: "16px" }}>
-              {Object.entries(SOCIAL_PLATFORMS).map(([name, cfg]) => {
-                const isSelected = distExpanded?.adId === ad.id && distExpanded?.platformId === cfg.id;
-                const isCampaignPlatform = campaignPlatforms.includes(name);
+          </div>
+        </SectionCard>
+      ) : (
+        distributable.map((ad) => {
+          const campaignPlatforms = (ad.platforms || []).filter((p) => SOCIAL_PLATFORMS[p]);
+          return (
+            <SectionCard
+              key={ad.id}
+              title={ad.title}
+              subtitle={`${ad.output_files.length} creative${ad.output_files.length !== 1 ? "s" : ""} ready · ${ad.platforms?.join(", ") || "no platforms configured"}`}
+            >
+              {/* Creative strip */}
+              <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
+                <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)", flex: 1 }}>
+                  Ad Creatives
+                </p>
+                <button className="btn--inline-action--ghost" onClick={() => onPreviewAd(ad)}>
+                  <Eye size={11} /> Preview All
+                </button>
+              </div>
+              <div style={{ display: "flex", gap: "8px", marginBottom: "20px", overflowX: "auto", paddingBottom: "4px" }}>
+                {ad.output_files.slice(0, 6).map((c, i) => (
+                  <div key={i} style={{ width: "80px", height: "60px", borderRadius: "6px", flexShrink: 0, border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)", overflow: "hidden" }}>
+                    {c.image_url
+                      ? <img src={c.image_url} alt={c.headline} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}><Image size={18} style={{ color: "var(--color-sidebar-text)", opacity: 0.35 }} /></div>
+                    }
+                  </div>
+                ))}
+                {ad.output_files.length > 6 && (
+                  <div style={{ width: "80px", height: "60px", borderRadius: "6px", flexShrink: 0, border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <span style={{ fontSize: "0.75rem", color: "var(--color-sidebar-text)" }}>+{ad.output_files.length - 6}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Platform tiles */}
+              <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)", marginBottom: "10px" }}>
+                Distribute to
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "8px", marginBottom: "16px" }}>
+                {Object.entries(SOCIAL_PLATFORMS).map(([name, cfg]) => {
+                  const isSelected = distExpanded?.adId === ad.id && distExpanded?.platformId === cfg.id;
+                  const isCampaignPlatform = campaignPlatforms.includes(name);
+                  return (
+                    <DistributePlatformTile
+                      key={name}
+                      platformName={name}
+                      selected={isSelected}
+                      status={distStatus[`${ad.id}_${cfg.id}`]}
+                      dim={!isCampaignPlatform && cfg.active}
+                      active={cfg.active}
+                      onClick={() => onSelectPlatform(ad.id, cfg.id)}
+                    />
+                  );
+                })}
+              </div>
+
+              {/* Inline form */}
+              {distExpanded?.adId === ad.id && (() => {
+                const entry = Object.entries(SOCIAL_PLATFORMS).find(([, cfg]) => cfg.id === distExpanded.platformId);
+                if (!entry) return null;
+                const [platformName, platformConfig] = entry;
+                const fk = `${ad.id}_${platformConfig.id}`;
                 return (
-                  <DistributePlatformTile
-                    key={name}
-                    platformName={name}
-                    selected={isSelected}
-                    status={distStatus[`${ad.id}_${cfg.id}`]}
-                    dim={!isCampaignPlatform && cfg.active}
-                    active={cfg.active}
-                    onClick={() => onSelectPlatform(ad.id, cfg.id)}
+                  <DistributeForm
+                    platformName={platformName}
+                    platformConfig={platformConfig}
+                    formData={distForms[fk] || {}}
+                    status={distStatus[fk]}
+                    creatives={ad.output_files}
+                    metaConnection={metaConnection}
+                    onChange={(key, val) => onUpdateForm(ad.id, platformConfig.id, key, val)}
+                    onPost={() => onDistribute(ad.id, platformConfig)}
                   />
                 );
-              })}
-            </div>
-
-            {/* Inline post form */}
-            {distExpanded?.adId === ad.id && (() => {
-              const entry = Object.entries(SOCIAL_PLATFORMS).find(([, cfg]) => cfg.id === distExpanded.platformId);
-              if (!entry) return null;
-              const [platformName, platformConfig] = entry;
-              const fk = `${ad.id}_${platformConfig.id}`;
-              return (
-                <DistributeForm
-                  platformName={platformName}
-                  platformConfig={platformConfig}
-                  formData={distForms[fk] || {}}
-                  status={distStatus[fk]}
-                  creatives={ad.output_files}
-                  onChange={(key, val) => onUpdateForm(ad.id, platformConfig.id, key, val)}
-                  onPost={() => onDistribute(ad.id, platformConfig)}
-                />
-              );
-            })()}
-          </SectionCard>
-        );
-      })}
+              })()}
+            </SectionCard>
+          );
+        })
+      )}
     </div>
   );
 }
@@ -1407,7 +1751,7 @@ function DistributePlatformTile({ platformName, selected, status, dim, onClick, 
   );
 }
 
-function DistributeForm({ platformName, platformConfig, formData, status, creatives, onChange, onPost }) {
+function DistributeForm({ platformName, platformConfig, formData, status, creatives, metaConnection, onChange, onPost }) {
   const isPosting = status?.status === "posting";
   const isPosted  = status?.status === "posted";
   const isError   = status?.status === "error";
@@ -1421,20 +1765,19 @@ function DistributeForm({ platformName, platformConfig, formData, status, creati
     fontSize: "0.72rem", fontWeight: 600, color: "var(--color-sidebar-text)",
     display: "block", marginBottom: "5px",
   };
-
   const requiredPill = (
-    <span style={{
-      fontSize: "0.6rem", fontWeight: 700, padding: "1px 6px", borderRadius: 999,
-      backgroundColor: "rgba(239,68,68,0.1)", color: "#ef4444",
-      marginLeft: 5, verticalAlign: "middle", letterSpacing: "0.05em",
-    }}>required</span>
+    <span style={{ fontSize: "0.6rem", fontWeight: 700, padding: "1px 6px", borderRadius: 999, backgroundColor: "rgba(239,68,68,0.1)", color: "#ef4444", marginLeft: 5, verticalAlign: "middle" }}>
+      required
+    </span>
   );
 
+  // For OAuth platforms, check if connection is ready
+  const isMetaReady = !platformConfig.usesOAuth || (metaConnection?.ad_account_id && metaConnection?.page_id);
+  const metaNotConnected = platformConfig.usesOAuth && !metaConnection;
+  const metaMissingSelection = platformConfig.usesOAuth && metaConnection && (!metaConnection.ad_account_id || !metaConnection.page_id);
+
   return (
-    <div style={{
-      padding: "20px", borderRadius: "12px",
-      border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)",
-    }}>
+    <div style={{ padding: "20px", borderRadius: "12px", border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)" }}>
       <p style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--color-input-text)", marginBottom: "4px" }}>
         Publish to {platformName} via Marketing API
       </p>
@@ -1442,29 +1785,42 @@ function DistributeForm({ platformName, platformConfig, formData, status, creati
         Ads are created in <strong>PAUSED</strong> state — review and activate them in Meta Ads Manager.
       </p>
 
+      {/* Connection status banner for OAuth platforms */}
+      {platformConfig.usesOAuth && metaConnection && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: "8px", backgroundColor: "rgba(34,197,94,0.07)", border: "1px solid rgba(34,197,94,0.25)", marginBottom: "16px" }}>
+          <CheckCircle2 size={13} style={{ color: "#22c55e", flexShrink: 0 }} />
+          <p style={{ fontSize: "0.78rem", color: "#16a34a" }}>
+            Publishing as <strong>{metaConnection.page_name || metaConnection.page_id}</strong> · Ad Account: <strong>{metaConnection.ad_account_name || metaConnection.ad_account_id}</strong>
+          </p>
+        </div>
+      )}
+
+      {/* Warn if not connected or incomplete */}
+      {metaNotConnected && (
+        <div style={{ display: "flex", gap: 8, padding: "10px 12px", borderRadius: "8px", backgroundColor: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.22)", marginBottom: "16px" }}>
+          <AlertCircle size={14} style={{ color: "#ef4444", flexShrink: 0, marginTop: 1 }} />
+          <p style={{ fontSize: "0.78rem", color: "#ef4444" }}>Connect your Meta account in Platform Settings above before publishing.</p>
+        </div>
+      )}
+      {metaMissingSelection && (
+        <div style={{ display: "flex", gap: 8, padding: "10px 12px", borderRadius: "8px", backgroundColor: "rgba(234,179,8,0.08)", border: "1px solid rgba(234,179,8,0.3)", marginBottom: "16px" }}>
+          <AlertCircle size={14} style={{ color: "#ca8a04", flexShrink: 0, marginTop: 1 }} />
+          <p style={{ fontSize: "0.78rem", color: "#92400e" }}>Select an Ad Account and Facebook Page in Platform Settings above.</p>
+        </div>
+      )}
+
+      {/* Per-campaign fields (destination URL, budget, targeting) */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "12px", marginBottom: "16px" }}>
         {platformConfig.fields.map((field) => (
-          <div key={field.key} style={field.type === "textarea" ? { gridColumn: "1 / -1" } : {}}>
-            <label style={labelStyle}>
-              {field.label}
-              {field.required && requiredPill}
-            </label>
-            {field.type === "textarea" ? (
-              <textarea
-                style={{ ...inputStyle, resize: "vertical", minHeight: "72px" }}
-                placeholder={field.placeholder || ""}
-                value={formData[field.key] || ""}
-                onChange={(e) => onChange(field.key, e.target.value)}
-              />
-            ) : (
-              <input
-                type={field.type}
-                style={inputStyle}
-                placeholder={field.placeholder || ""}
-                value={formData[field.key] || ""}
-                onChange={(e) => onChange(field.key, e.target.value)}
-              />
-            )}
+          <div key={field.key}>
+            <label style={labelStyle}>{field.label}{field.required && requiredPill}</label>
+            <input
+              type={field.type}
+              style={inputStyle}
+              placeholder={field.placeholder || ""}
+              value={formData[field.key] || ""}
+              onChange={(e) => onChange(field.key, e.target.value)}
+            />
           </div>
         ))}
       </div>
@@ -1479,32 +1835,22 @@ function DistributeForm({ platformName, platformConfig, formData, status, creati
               <button
                 key={i}
                 onClick={() => {
-                  const cur     = formData.selected_creatives || [];
-                  const updated = sel ? cur.filter((x) => x !== i) : [...cur, i];
-                  onChange("selected_creatives", updated);
+                  const cur = formData.selected_creatives || [];
+                  onChange("selected_creatives", sel ? cur.filter((x) => x !== i) : [...cur, i]);
                 }}
                 title={c.headline || `Creative ${i + 1}`}
-                style={{
-                  width: "60px", height: "45px", borderRadius: "6px", flexShrink: 0,
-                  border: `2px solid ${sel ? "var(--color-accent)" : "var(--color-card-border)"}`,
-                  backgroundColor: "var(--color-card-bg)", overflow: "hidden",
-                  padding: 0, cursor: "pointer",
-                }}
+                style={{ width: "60px", height: "45px", borderRadius: "6px", flexShrink: 0, border: `2px solid ${sel ? "var(--color-accent)" : "var(--color-card-border)"}`, backgroundColor: "var(--color-card-bg)", overflow: "hidden", padding: 0, cursor: "pointer" }}
               >
                 {c.image_url
                   ? <img src={c.image_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <Image size={14} style={{ color: "var(--color-sidebar-text)", opacity: 0.4 }} />
-                    </div>
+                  : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}><Image size={14} style={{ color: "var(--color-sidebar-text)", opacity: 0.4 }} /></div>
                 }
               </button>
             );
           })}
         </div>
-        {creatives.length > 0 && !(formData.selected_creatives?.length) && (
-          <p style={{ fontSize: "0.68rem", color: "var(--color-muted)", marginTop: 4 }}>
-            No creatives selected — the first creative will be used.
-          </p>
+        {creatives.length > 0 && !formData.selected_creatives?.length && (
+          <p style={{ fontSize: "0.68rem", color: "var(--color-muted)", marginTop: 4 }}>No creatives selected — first creative will be used.</p>
         )}
       </div>
 
@@ -1528,12 +1874,7 @@ function DistributeForm({ platformName, platformConfig, formData, status, creati
             <span>Ad Set ID: <code style={{ fontFamily: "monospace" }}>{status.result.adset_id}</code></span>
             <span>Ads created: {status.result.ad_ids?.length ?? 0}</span>
           </div>
-          <a
-            href={status.result.ads_manager_url}
-            target="_blank" rel="noreferrer"
-            className="btn--inline-action--success"
-            style={{ fontSize: "0.8rem" }}
-          >
+          <a href={status.result.ads_manager_url} target="_blank" rel="noreferrer" className="btn--inline-action--success" style={{ fontSize: "0.8rem" }}>
             <ExternalLink size={11} /> Open in Meta Ads Manager
           </a>
         </div>
@@ -1541,13 +1882,11 @@ function DistributeForm({ platformName, platformConfig, formData, status, creati
 
       <button
         onClick={onPost}
-        disabled={isPosting}
+        disabled={isPosting || !isMetaReady}
         className="btn--accent"
-        style={{ display: "inline-flex", alignItems: "center", gap: "8px", opacity: isPosting ? 0.7 : 1 }}
+        style={{ display: "inline-flex", alignItems: "center", gap: "8px", opacity: (isPosting || !isMetaReady) ? 0.5 : 1 }}
       >
-        {isPosting
-          ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
-          : <Share2 size={14} />}
+        {isPosting ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Share2 size={14} />}
         {isPosting ? "Publishing to Meta…" : isPosted ? "Republish" : `Publish to ${platformName}`}
       </button>
     </div>

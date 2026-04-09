@@ -13,7 +13,7 @@ from sqlalchemy import select
 from app.db.database import get_db
 from app.models.models import User, Company
 from app.schemas.schemas import LoginRequest, TokenResponse
-from app.core.security import verify_password, create_access_token
+from app.core.security import verify_password, create_access_token, get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -67,6 +67,37 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
         company_id=user.company_id,
     )
 
+    return TokenResponse(
+        access_token=token,
+        role=user.role.value,
+        company_id=user.company_id,
+        company_name=company.name,
+        company_industry=company.industry,
+        user_id=user.id,
+        onboarded=company.onboarded,
+    )
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh_token(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Re-issue a fresh 24-hour token for an already-authenticated user.
+    Frontend calls this proactively before the current token expires,
+    so the user never sees a session-expired error during active use.
+    """
+    company_result = await db.execute(select(Company).where(Company.id == user.company_id))
+    company = company_result.scalar_one_or_none()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    token = create_access_token(
+        user_id=user.id,
+        role=user.role.value,
+        company_id=user.company_id,
+    )
     return TokenResponse(
         access_token=token,
         role=user.role.value,

@@ -335,6 +335,33 @@ class VoiceSession(Base):
     transcripts   = relationship("CallTranscript", back_populates="session", cascade="all, delete-orphan")
 
 
+# ─── Platform Connections ─────────────────────────────────────────────────────
+# Stores OAuth tokens for social ad platforms (Meta, etc.) per company.
+# One record per company per platform. Token is a long-lived user access token
+# (60 days, auto-renews on active use). Publisher selects their ad account and
+# Facebook page here; distribute endpoint reads these instead of prompting per-publish.
+
+class PlatformConnection(Base):
+    __tablename__ = "platform_connections"
+    __table_args__ = (
+        UniqueConstraint("company_id", "platform", name="uq_platform_connections_company_platform"),
+    )
+
+    id               = Column(String, primary_key=True, default=_uuid)
+    company_id       = Column(String, ForeignKey("companies.id"), nullable=False)
+    user_id          = Column(String, ForeignKey("users.id"), nullable=False)
+    platform         = Column(String(32), nullable=False)       # "meta"
+    access_token     = Column(Text, nullable=False)             # long-lived user access token
+    token_expires_at = Column(DateTime, nullable=True)          # None = never expires
+    ad_account_id    = Column(String(128), nullable=True)       # selected ad account (act_xxx)
+    ad_account_name  = Column(String(256), nullable=True)
+    page_id          = Column(String(128), nullable=True)       # selected Facebook page
+    page_name        = Column(String(256), nullable=True)
+    meta_user_id     = Column(String(128), nullable=True)       # Meta user UID
+    created_at       = Column(DateTime, default=_now)
+    updated_at       = Column(DateTime, default=_now, onupdate=_now)
+
+
 # ─── Call Transcripts ─────────────────────────────────────────────────────────
 # Stores speaker turns fetched from ElevenLabs after a session ends.
 

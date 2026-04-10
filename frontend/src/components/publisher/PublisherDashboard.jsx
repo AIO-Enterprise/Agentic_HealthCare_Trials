@@ -555,7 +555,7 @@ function getDeployChecklist(ad) {
 }
 
 // ─── Overview Tab ─────────────────────────────────────────────────────────────
-function OverviewTab({ approved, published, publishing, publishError, expandedId, onToggle, onPublish, onPreviewAd, onViewDetail, hostingId, hostError, onHostPage }) {
+function OverviewTab({ approved, published, publishing, publishError, expandedId, onToggle, onPublish, onUpdateAd, onPreviewAd, onViewDetail, hostingId, hostError, onHostPage }) {
   return (
     <div className="space-y-4">
       {publishError && (
@@ -610,7 +610,9 @@ function OverviewTab({ approved, published, publishing, publishError, expandedId
               key={ad.id} ad={ad}
               expanded={expandedId === ad.id} onToggle={() => onToggle(ad.id)}
               publishing={publishing}
-              onPublish={onPublish} onPreviewAd={onPreviewAd} onViewDetail={onViewDetail}
+              onPublish={onPublish} onUpdateAd={onUpdateAd}
+              onPreviewAd={onPreviewAd} onViewDetail={onViewDetail}
+              hostingId={hostingId} hostError={hostError} onHostPage={onHostPage}
             />
           ))
         )}
@@ -619,8 +621,23 @@ function OverviewTab({ approved, published, publishing, publishError, expandedId
   );
 }
 
-function CampaignRow({ ad, expanded, onToggle, publishing, onPublish, onPreviewAd, onViewDetail }) {
-  const isLive = ad.status === "published";
+// ─── Campaign Row ──────────────────────────────────────────────────────────────
+function CampaignRow({ ad, expanded, onToggle, publishing, onPublish, onUpdateAd, onPreviewAd, onViewDetail }) {
+  const isLive     = ad.status === "published";
+  const checklist  = getDeployChecklist(ad);
+  const doneCount  = checklist.filter((i) => i.done).length;
+  const totalCount = checklist.length;
+  const allDone    = totalCount > 0 && doneCount === totalCount;
+
+  // Progress pill colour
+  const pillColor = isLive
+    ? { bg: "rgba(34,197,94,0.12)", text: "#15803d" }
+    : allDone
+      ? { bg: "rgba(34,197,94,0.12)", text: "#15803d" }
+      : doneCount === 0
+        ? { bg: "rgba(107,114,128,0.1)", text: "var(--color-sidebar-text)" }
+        : { bg: "rgba(234,179,8,0.12)", text: "#92400e" };
+
   return (
     <div>
       <div
@@ -672,7 +689,7 @@ function CampaignRow({ ad, expanded, onToggle, publishing, onPublish, onPreviewA
       {/* Expanded panel */}
       {expanded && (
         isLive
-          ? <PublishedCampaignPanel ad={ad} onPreviewAd={onPreviewAd} />
+          ? <PublishedCampaignPanel ad={ad} onPreviewAd={onPreviewAd} onUpdateAd={onUpdateAd} />
           : <DeploymentChecklist
               ad={ad}
               checklist={checklist}
@@ -828,7 +845,21 @@ function DeploymentChecklist({ ad, checklist, allDone, publishing, onPublish, on
   );
 }
 
-function CampaignDetailPanel({ ad, onPreviewAd }) {
+// ─── Published Campaign Panel (shown for active/published campaigns) ──────────
+function PublishedCampaignPanel({ ad, onPreviewAd, onUpdateAd }) {
+  const [hosting, setHosting] = useState(false);
+  const [hostErr, setHostErr] = useState(null);
+
+  const handleHostPage = async () => {
+    setHosting(true);
+    setHostErr(null);
+    try {
+      const updated = await adsAPI.hostPage(ad.id);
+      onUpdateAd(updated);
+    } catch (err) { setHostErr(err.message); }
+    finally { setHosting(false); }
+  };
+
   const isWebsite = hasType(ad, "website");
   const isAds     = hasType(ad, "ads");
 
@@ -847,17 +878,17 @@ function CampaignDetailPanel({ ad, onPreviewAd }) {
                   <Download size={11} /> Download HTML
                 </a>
                 <button
-                  onClick={() => onHostPage(ad.id)}
-                  disabled={hostingId === ad.id}
+                  onClick={handleHostPage}
+                  disabled={hosting}
                   className="btn--inline-action--ghost"
-                  style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: hostingId === ad.id ? "wait" : "pointer" }}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: hosting ? "wait" : "pointer" }}
                 >
                   <Globe size={11} />
-                  {hostingId === ad.id ? "Hosting…" : ad.hosted_url ? "Re-host" : "Host"}
+                  {hosting ? "Hosting…" : ad.hosted_url ? "Re-host" : "Host"}
                 </button>
               </div>
-              {hostError[ad.id] && (
-                <p style={{ fontSize: "0.75rem", color: "#ef4444", marginTop: 6 }}>{hostError[ad.id]}</p>
+              {hostErr && (
+                <p style={{ fontSize: "0.75rem", color: "#ef4444", marginTop: 6 }}>{hostErr}</p>
               )}
               {ad.hosted_url && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, padding: "8px 12px", borderRadius: 8, backgroundColor: "rgba(34,197,94,0.06)", border: "1px solid rgba(34,197,94,0.2)" }}>

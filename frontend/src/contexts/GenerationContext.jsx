@@ -29,6 +29,18 @@ export function GenerationProvider({ children }) {
     setProgress(Math.round(pct));
   }, []);
 
+  // Poll GET /{adId} until the ad's status leaves the "generating" state.
+  // Returns the final ad object, or throws if it times out or resets to draft.
+  const _pollUntilReady = useCallback(async (adId, timeoutMs = 300_000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 4000));
+      const ad = await adsAPI.get(adId);
+      if (ad.status !== "generating") return ad;
+    }
+    throw new Error("Strategy generation timed out. Please try again.");
+  }, []);
+
   const startGeneration = useCallback(async (adId, title, adTypes = []) => {
     if (timerRef.current) clearInterval(timerRef.current);
     startedAt.current = Date.now();
@@ -44,8 +56,17 @@ export function GenerationProvider({ children }) {
     const hasWebsite = types.includes("website");
 
     try {
+      // Kick off strategy — returns immediately with status=generating
       await adsAPI.generateStrategy(adId);
+      // Poll until the background task finishes (status moves off "generating")
+      const ad = await _pollUntilReady(adId);
+      if (ad.status === "draft") {
+        // Backend reset to draft — strategy generation failed server-side
+        throw new Error("Strategy generation failed on the server. Please try again.");
+      }
+      // submitForReview runs LLM in background (returns immediately)
       await adsAPI.submitForReview(adId);
+      // These also return immediately; output appears asynchronously
       if (hasAds)     await adsAPI.generateCreatives(adId);
       if (hasWebsite) await adsAPI.generateWebsite(adId);
       clearInterval(timerRef.current);
@@ -63,7 +84,7 @@ export function GenerationProvider({ children }) {
       setIsGenerating(false);
       setProgress(0);
     }
-  }, [tick]);
+  }, [tick, _pollUntilReady]);
 
   const dismiss = useCallback(() => {
     clearInterval(timerRef.current);

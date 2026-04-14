@@ -323,75 +323,107 @@ export const adsAPI = {
       body: JSON.stringify(data),
     }),
 
-  // Upload a campaign-specific protocol document using chunked JSON requests.
-  // Each request body stays under 8 KB to satisfy CloudFront WAF body-size rules.
-  // Files are split into 5 KB binary chunks, base64-encoded, and sent individually.
+  // Upload a campaign-specific protocol document.
+  //
+  // Production (CloudFront): uses S3 pre-signed URL so the file goes browser → S3
+  // directly, completely bypassing CloudFront WAF body-size limits.
+  // Backend then downloads from S3, extracts text, saves to EFS.
+  //
+  // Localhost / no-S3: falls back to direct multipart upload (no WAF in the way).
+  //
+  // Supports files up to 50 MB.
   uploadDocument: async (adId, docType, title, file) => {
     const token = localStorage.getItem("token");
-    const CHUNK_SIZE = 5120; // 5 KB — base64 ≈ 6.8 KB body, well under 8 KB WAF limit
 
-    const authJson = {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-    };
-
-    const post = async (path, body) => {
+    const postJson = async (path, body) => {
       const res = await fetch(`${API_BASE}${path}`, {
-        ...authJson,
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify(body),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
         const detail = Array.isArray(err.detail)
-          ? err.detail.map((d) => `${(d.loc || []).slice(-1)[0] ?? ""}: ${d.msg}`).join("; ")
-          : (err.detail ? String(err.detail) : `Protocol document upload failed (HTTP ${res.status})`);
+          ? err.detail
+              .map((d) => {
+                const field = Array.isArray(d.loc) ? d.loc.filter((x) => x !== "body").join(" → ") : "";
+                return field ? `${field}: ${d.msg}` : d.msg;
+              })
+              .join("; ")
+          : err.detail
+          ? String(err.detail)
+          : `Upload failed (HTTP ${res.status})`;
         throw new Error(detail);
       }
       return res.json();
     };
 
-    // Read file as raw bytes
-    const arrayBuffer = await file.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
+    const contentType = file.type || "application/octet-stream";
 
-    // Split into CHUNK_SIZE pieces
-    const chunks = [];
-    for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
-      chunks.push(bytes.slice(i, i + CHUNK_SIZE));
-    }
-    // Always at least one chunk (handles empty files)
-    if (chunks.length === 0) chunks.push(new Uint8Array(0));
-
-    // base64-encode a Uint8Array without using spread (safe for large arrays)
-    const toBase64 = (arr) => {
-      let binary = "";
-      for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
-      return btoa(binary);
-    };
-
-    // 1. Open upload session
-    const { upload_id } = await post(`/advertisements/${adId}/documents/start`, {
+    // 1. Ask backend: S3 or direct?
+    const presign = await postJson(`/advertisements/${adId}/documents/presign`, {
       doc_type:     docType,
       title,
       filename:     file.name,
-      content_type: file.type || "application/octet-stream",
-      total_chunks: chunks.length,
+      content_type: contentType,
+      file_size:    file.size,
     });
 
-    // 2. Send each chunk
-    for (let i = 0; i < chunks.length; i++) {
-      await post(`/advertisements/${adId}/documents/chunk`, {
-        upload_id,
-        chunk_index: i,
-        data: toBase64(chunks[i]),
+    if (presign.method === "s3") {
+      // 2a. PUT file directly to S3 (bypasses CloudFront WAF entirely).
+      // Must use the exact Content-Type the pre-signed URL was signed with,
+      // otherwise S3 returns 403 SignatureDoesNotMatch.
+      const s3Res = await fetch(presign.upload_url, {
+        method:  "PUT",
+        headers: { "Content-Type": presign.content_type || contentType },
+        body:    file,
       });
+
+      if (s3Res.ok) {
+        // 3a. Tell backend to process the uploaded file
+        return postJson(`/advertisements/${adId}/documents/confirm`, {
+          s3_key:       presign.s3_key,
+          doc_type:     docType,
+          title,
+          filename:     file.name,
+          content_type: presign.content_type || contentType,
+        });
+      }
+
+      // S3 PUT failed — log and fall through to direct multipart
+      const errBody = await s3Res.text().catch(() => "");
+      console.warn("S3 upload failed, falling back to direct upload:", s3Res.status, errBody);
     }
 
-    // 3. Finalize — assemble on server and create DB record
-    return post(`/advertisements/${adId}/documents/finalize`, { upload_id });
+    // 2b. Direct multipart upload (localhost / S3 not configured / S3 permission error)
+    const formData = new FormData();
+    formData.append("doc_type", docType);
+    formData.append("title", title);
+    formData.append("file", file);
+
+    const res = await fetch(`${API_BASE}/advertisements/${adId}/documents`, {
+      method:  "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body:    formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      const detail = Array.isArray(err.detail)
+        ? err.detail
+            .map((d) => {
+              const field = Array.isArray(d.loc) ? d.loc.filter((x) => x !== "body").join(" → ") : "";
+              return field ? `${field}: ${d.msg}` : d.msg;
+            })
+            .join("; ")
+        : err.detail
+        ? String(err.detail)
+        : `Upload failed (HTTP ${res.status})`;
+      throw new Error(detail);
+    }
+    return res.json();
   },
 
   listDocuments: (adId) => request(`/advertisements/${adId}/documents`),

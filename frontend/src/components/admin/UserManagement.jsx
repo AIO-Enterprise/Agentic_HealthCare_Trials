@@ -24,16 +24,16 @@ const EMPTY_FORM = { email: "", password: "", full_name: "", role: "project_mana
 
 export default function UserManagement() {
   const { user: currentUser } = useAuth();
-  const [users,           setUsers]           = useState([]);
-  const [showForm,        setShowForm]        = useState(false);
-  const [form,            setForm]            = useState(EMPTY_FORM);
-  const [loading,         setLoading]         = useState(false);
-  const [fetchError,      setFetchError]      = useState(null);
-  const [formError,       setFormError]       = useState(null);
-  const [formOk,          setFormOk]          = useState(false);
-  const [deactivating,    setDeactivating]    = useState(null);   // userId being deactivated
-  const [confirmTarget,   setConfirmTarget]   = useState(null);   // userId awaiting confirmation
 
+  const [users, setUsers] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
+  const [formError, setFormError] = useState(null);
+  const [formOk, setFormOk] = useState(false);
+  const [deactivating, setDeactivating] = useState(null); // userId being deactivated
+  const [confirmTarget, setConfirmTarget] = useState(null); // userId awaiting confirmation
   useEffect(() => {
     usersAPI.list()
       .then(setUsers)

@@ -627,6 +627,8 @@ const STATUS_STEPS = [
 ];
 
 function statusIndex(status) {
+  // "generating" sits between draft and strategy_created in the timeline
+  if (status === "generating") return 0;
   const idx = STATUS_STEPS.findIndex((s) => s.key === status);
   return idx === -1 ? 0 : idx;
 }
@@ -3156,6 +3158,18 @@ function CampaignDetailPageInner() {
   const canGenerate   = isStudyCoordinator || canRegenerate;
   const isPublisher   = role === "publisher";
 
+  // Poll GET /{adId} until updated_at changes (background task committed).
+  // Used after any endpoint that fires a BackgroundTask and returns immediately.
+  const pollUntilUpdated = useCallback(async (adId, beforeUpdatedAt, timeoutMs = 300_000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 4000));
+      const latest = await adsAPI.get(adId);
+      if (latest.updated_at !== beforeUpdatedAt) return latest;
+    }
+    throw new Error("Timed out waiting for generation to complete. Please refresh the page.");
+  }, []);
+
   const load = useCallback(async () => {
     try {
       const [adData, docsData, reviewsData] = await Promise.all([
@@ -3207,9 +3221,10 @@ function CampaignDetailPageInner() {
       // Step 2 — website (if campaign type includes website)
       if (isWebsite) {
         setWebsiteLoading(true); setWebsiteError(null);
-        genProgress.start("Building landing page…", 35000);
+        genProgress.start("Building landing page…", 120000);
         try {
-          const afterWebsite = await adsAPI.generateWebsite(id);
+          const triggeredWebsite = await adsAPI.generateWebsite(id);
+          const afterWebsite = await pollUntilUpdated(id, triggeredWebsite.updated_at);
           setAd(afterWebsite);
           genProgress.complete();
         } catch (err) {
@@ -3223,9 +3238,10 @@ function CampaignDetailPageInner() {
       // Step 3 — creatives (if campaign includes non-website ad types)
       if (hasNonWeb) {
         setCreativeLoading(true); setCreativeError(null);
-        genProgress.start("Generating ad creatives…", 40000);
+        genProgress.start("Generating ad creatives + images…", 120000);
         try {
-          const afterCreatives = await adsAPI.generateCreatives(id);
+          const triggeredCreatives = await adsAPI.generateCreatives(id);
+          const afterCreatives = await pollUntilUpdated(id, triggeredCreatives.updated_at);
           setAd(afterCreatives);
           genProgress.complete();
         } catch (err) {
@@ -3245,9 +3261,10 @@ function CampaignDetailPageInner() {
 
   const handleSubmitForReview = async () => {
     setRevLoading(true); setRevError(null);
-    genProgress.start("Running AI review…", 20000);
+    genProgress.start("Running AI review…", 60000);
     try {
-      const updated = await adsAPI.submitForReview(id);
+      const triggered = await adsAPI.submitForReview(id);
+      const updated = await pollUntilUpdated(id, triggered.updated_at);
       setAd(updated);
       genProgress.complete();
     } catch (err) {
@@ -3279,9 +3296,11 @@ function CampaignDetailPageInner() {
 
   const handleGenerateCreatives = async () => {
     setCreativeLoading(true); setCreativeError(null);
-    genProgress.start("Generating ad creatives + images…", 60000);
+    genProgress.start("Generating ad creatives + images…", 120000);
     try {
-      const updated = await adsAPI.generateCreatives(id);
+      const triggered = await adsAPI.generateCreatives(id);
+      // Backend returns immediately; poll until the background task commits
+      const updated = await pollUntilUpdated(id, triggered.updated_at);
       setAd(updated);
       genProgress.complete();
     } catch (err) {
@@ -3294,9 +3313,11 @@ function CampaignDetailPageInner() {
 
   const handleGenerateWebsite = async () => {
     setWebsiteLoading(true); setWebsiteError(null);
-    genProgress.start("Building landing page…", 35000);
+    genProgress.start("Building landing page…", 120000);
     try {
-      const updated = await adsAPI.generateWebsite(id);
+      const triggered = await adsAPI.generateWebsite(id);
+      // Backend returns immediately; poll until the background task commits
+      const updated = await pollUntilUpdated(id, triggered.updated_at);
       setAd(updated);
       genProgress.complete();
     } catch (err) {
@@ -3900,8 +3921,16 @@ function CampaignDetailPageInner() {
             </SectionCard>
           )}
 
+          {/* Generating spinner — shown while background task is running */}
+          {!hasStrategy && ad.status === "generating" && (
+            <div style={{ textAlign: "center", padding: "48px 0" }}>
+              <div style={{ display: "inline-block", width: 32, height: 32, border: "3px solid var(--color-card-border)", borderTopColor: "var(--color-accent)", borderRadius: "50%", animation: "spin 0.8s linear infinite", marginBottom: 12 }} />
+              <p style={{ color: "var(--color-sidebar-text)", fontSize: "0.9rem" }}>Generating strategy… this usually takes 1–2 minutes.</p>
+            </div>
+          )}
+
           {/* Empty state */}
-          {!hasStrategy && ad.status !== "draft" && (
+          {!hasStrategy && ad.status !== "draft" && ad.status !== "generating" && (
             <div style={{ textAlign: "center", padding: "48px 0" }}>
               <Layers size={32} style={{ color: "var(--color-card-border)", margin: "0 auto 12px" }} />
               <p style={{ color: "var(--color-sidebar-text)", fontSize: "0.9rem" }}>Strategy not yet generated for this campaign.</p>

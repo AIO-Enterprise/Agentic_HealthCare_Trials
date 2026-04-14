@@ -22,6 +22,8 @@ const ROLES = [
 const EMPTY_FORM = { email: "", password: "", full_name: "", role: "project_manager" };
 
 export default function UserManagement() {
+  const currentUserId = JSON.parse(localStorage.getItem("user") || "{}").id;
+
   const [users,      setUsers]      = useState([]);
   const [showForm,   setShowForm]   = useState(false);
   const [form,       setForm]       = useState(EMPTY_FORM);
@@ -248,7 +250,7 @@ export default function UserManagement() {
                     </span>
                   </div>
 
-                  {u.is_active && (
+                  {u.is_active && u.id !== currentUserId && (
                     <button
                       onClick={() => handleDeactivate(u.id)}
                       disabled={deactivating === u.id}

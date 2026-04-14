@@ -20,7 +20,7 @@ from app.db.database import get_db
 from app.models.models import User, UserRole, Company
 
 # Routes that authenticated-but-not-yet-onboarded users are allowed to call.
-_ONBOARDING_PREFIXES = ("/api/onboarding", "/api/auth", "/api/health", "/api/brand-kit", "/api/users")
+_ONBOARDING_PREFIXES = ("/api/onboarding", "/api/auth", "/api/health", "/api/brand-kit", "/api/users", "/api/company")
 
 # ─── Password hashing ────────────────────────────────────────────────────────
 

@@ -21,7 +21,7 @@ import mimetypes
 import shutil
 import tempfile
 import uuid as uuid_mod
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -39,6 +39,8 @@ from app.schemas.schemas import (
     ReviewCreate, ReviewOut, OptimizerDecision, BotConfigUpdate,
     AdvertisementDocumentOut, MinorEditRequest, RewriteStrategyRequest,
     QuestionnaireUpdate, RewriteQuestionRequest,
+    StartUploadRequest, ChunkUploadRequest, FinalizeUploadRequest,
+    PresignRequest, PresignResponse, ConfirmUploadRequest,
 )
 from app.core.security import require_roles, get_current_user
 from app.services.ai.curator import CuratorService
@@ -101,6 +103,7 @@ async def create_advertisement(
         company_id=user.company_id,
         title=body.title,
         ad_type=body.ad_type,
+        campaign_category=body.campaign_category,
         budget=body.budget,
         duration=body.duration,
         platforms=body.platforms,
@@ -109,6 +112,7 @@ async def create_advertisement(
         patients_required=body.patients_required,
         trial_start_date=body.trial_start_date,
         trial_end_date=body.trial_end_date,
+        special_instructions=body.special_instructions,
         status=AdStatus.DRAFT,
     )
     db.add(ad)
@@ -317,11 +321,7 @@ async def upload_protocol_document(
 @router.post("/{ad_id}/documents/start")
 async def start_document_upload(
     ad_id: str,
-    doc_type:     str = Body(...),
-    title:        str = Body(...),
-    filename:     str = Body(...),
-    content_type: str = Body(...),
-    total_chunks: int = Body(...),
+    req: StartUploadRequest,
     user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
     db: AsyncSession = Depends(get_db),
 ):
@@ -335,7 +335,22 @@ async def start_document_upload(
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Advertisement not found")
 
-    if content_type not in ALLOWED_PROTOCOL_TYPES:
+    # Accept application/octet-stream as a fallback for browsers that can't
+    # detect the MIME type (e.g. .md files on some browsers).
+    effective_content_type = req.content_type
+    if effective_content_type == "application/octet-stream":
+        # Try to infer from filename extension
+        ext = req.filename.rsplit(".", 1)[-1].lower() if "." in req.filename else ""
+        ext_map = {
+            "pdf":  "application/pdf",
+            "doc":  "application/msword",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "txt":  "text/plain",
+            "md":   "text/markdown",
+        }
+        effective_content_type = ext_map.get(ext, req.content_type)
+
+    if effective_content_type not in ALLOWED_PROTOCOL_TYPES:
         raise HTTPException(
             status_code=400,
             detail="Invalid file type. Accepted: PDF, DOCX, DOC, TXT, MD.",
@@ -347,11 +362,11 @@ async def start_document_upload(
     meta = {
         "ad_id":        ad_id,
         "company_id":   user.company_id,
-        "doc_type":     doc_type,
-        "title":        title,
-        "filename":     filename,
-        "content_type": content_type,
-        "total_chunks": total_chunks,
+        "doc_type":     req.doc_type,
+        "title":        req.title,
+        "filename":     req.filename,
+        "content_type": effective_content_type,
+        "total_chunks": req.total_chunks,
     }
     with open(os.path.join(sess_dir, "meta.json"), "w") as f:
         json.dump(meta, f)
@@ -360,43 +375,41 @@ async def start_document_upload(
 
 @router.post("/{ad_id}/documents/chunk")
 async def upload_document_chunk(
-    ad_id:       str,
-    upload_id:   str = Body(...),
-    chunk_index: int = Body(...),
-    data:        str = Body(...),   # base64-encoded chunk bytes
-    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
+    ad_id: str,
+    req:   ChunkUploadRequest,
+    user:  User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
 ):
     """Receive one base64-encoded chunk for an in-progress upload."""
-    session = _load_session_meta(upload_id)
+    session = _load_session_meta(req.upload_id)
     if not session or session["ad_id"] != ad_id or session["company_id"] != user.company_id:
         raise HTTPException(status_code=404, detail="Upload session not found")
 
     try:
-        chunk_bytes = base64.b64decode(data)
+        chunk_bytes = base64.b64decode(req.data)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid base64 chunk data")
 
-    chunk_path = os.path.join(_session_dir(upload_id), f"chunk_{chunk_index}.bin")
+    chunk_path = os.path.join(_session_dir(req.upload_id), f"chunk_{req.chunk_index}.bin")
     with open(chunk_path, "wb") as f:
         f.write(chunk_bytes)
 
-    return {"received": chunk_index}
+    return {"received": req.chunk_index}
 
 
 @router.post("/{ad_id}/documents/finalize", response_model=AdvertisementDocumentOut)
 async def finalize_document_upload(
-    ad_id:     str,
-    upload_id: str = Body(..., embed=True),
-    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
-    db: AsyncSession = Depends(get_db),
+    ad_id: str,
+    req:   FinalizeUploadRequest,
+    user:  User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
+    db:    AsyncSession = Depends(get_db),
 ):
     """Assemble all chunks and create the AdvertisementDocument record."""
-    session = _load_session_meta(upload_id)
+    session = _load_session_meta(req.upload_id)
     if not session or session["ad_id"] != ad_id or session["company_id"] != user.company_id:
         raise HTTPException(status_code=404, detail="Upload session not found")
 
     expected = session["total_chunks"]
-    sess_dir = _session_dir(upload_id)
+    sess_dir = _session_dir(req.upload_id)
     missing = [i for i in range(expected) if not os.path.exists(os.path.join(sess_dir, f"chunk_{i}.bin"))]
     if missing:
         raise HTTPException(status_code=400, detail="Incomplete upload — missing chunks")
@@ -406,7 +419,7 @@ async def finalize_document_upload(
         with open(os.path.join(sess_dir, f"chunk_{i}.bin"), "rb") as f:
             parts.append(f.read())
     file_bytes = b"".join(parts)
-    _delete_session(upload_id)
+    _delete_session(req.upload_id)
 
     file_path = await file_storage.save_bytes(
         data=file_bytes,
@@ -431,6 +444,176 @@ async def finalize_document_upload(
     return doc
 
 
+# ─── S3 Pre-signed Upload (WAF-safe large-file upload) ────────────────────────
+# Flow:  frontend → POST /presign  (gets S3 PUT URL, small JSON body)
+#        frontend → PUT <s3_url>   (direct to S3, bypasses CloudFront WAF)
+#        frontend → POST /confirm  (backend downloads from S3, saves to EFS)
+#
+# Falls back to "direct" (multipart) when S3_UPLOAD_BUCKET is not configured
+# so localhost dev continues to work without any AWS setup.
+
+def _s3_client():
+    """Return a boto3 S3 client using the configured AWS credentials/region."""
+    import boto3
+    from botocore.config import Config as _BotocoreConfig
+    from app.core.config import settings as _s
+    kwargs: dict = {
+        "region_name": _s.AWS_REGION,
+        # SigV4 is required for pre-signed URLs on SSE-encrypted buckets
+        # and for any bucket outside us-east-1 classic endpoint
+        "config": _BotocoreConfig(signature_version="s3v4"),
+    }
+    if _s.AWS_ACCESS_KEY_ID:
+        kwargs["aws_access_key_id"] = _s.AWS_ACCESS_KEY_ID
+        kwargs["aws_secret_access_key"] = _s.AWS_SECRET_ACCESS_KEY
+    return boto3.client("s3", **kwargs)
+
+
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB hard cap
+
+
+@router.post("/{ad_id}/documents/presign", response_model=PresignResponse)
+async def get_document_presign_url(
+    ad_id: str,
+    req:   PresignRequest,
+    user:  User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
+    db:    AsyncSession = Depends(get_db),
+):
+    """
+    Return a pre-signed S3 PUT URL so the browser can upload directly to S3,
+    bypassing CloudFront WAF body-size restrictions.
+
+    If S3 is not configured (S3_UPLOAD_BUCKET unset) returns {"method": "direct"}
+    and the frontend falls back to the regular multipart endpoint.
+    """
+    from app.core.config import settings as _s
+
+    result = await db.execute(
+        select(Advertisement).where(
+            Advertisement.id == ad_id,
+            Advertisement.company_id == user.company_id,
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+
+    if req.file_size > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail=f"File too large (max {MAX_UPLOAD_BYTES // (1024*1024)} MB)")
+
+    # Validate MIME type (infer from extension if browser reports octet-stream)
+    effective_ct = req.content_type
+    if effective_ct == "application/octet-stream":
+        ext = req.filename.rsplit(".", 1)[-1].lower() if "." in req.filename else ""
+        ext_map = {
+            "pdf":  "application/pdf",
+            "doc":  "application/msword",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "txt":  "text/plain",
+            "md":   "text/markdown",
+        }
+        effective_ct = ext_map.get(ext, req.content_type)
+
+    if effective_ct not in ALLOWED_PROTOCOL_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid file type. Accepted: PDF, DOCX, DOC, TXT, MD.",
+        )
+
+    if not _s.S3_UPLOAD_BUCKET:
+        # Localhost / no S3 — tell frontend to use direct multipart upload
+        return PresignResponse(method="direct")
+
+    s3_key = f"{_s.S3_UPLOAD_PREFIX}/{user.company_id}/{ad_id}/{uuid_mod.uuid4()}_{req.filename}"
+    try:
+        client = _s3_client()
+        upload_url = client.generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket": _s.S3_UPLOAD_BUCKET,
+                "Key":    s3_key,
+                "ContentType": effective_ct,
+            },
+            ExpiresIn=3600,
+        )
+    except Exception as e:
+        logger.error("Failed to generate S3 pre-signed URL: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not generate upload URL")
+
+    return PresignResponse(method="s3", upload_url=upload_url, s3_key=s3_key, content_type=effective_ct)
+
+
+@router.post("/{ad_id}/documents/confirm", response_model=AdvertisementDocumentOut)
+async def confirm_s3_document_upload(
+    ad_id: str,
+    req:   ConfirmUploadRequest,
+    user:  User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
+    db:    AsyncSession = Depends(get_db),
+):
+    """
+    Called after the browser has PUT the file to S3.
+    Downloads the file from S3, extracts text, saves to EFS, creates DB record.
+    Deletes the temporary S3 object when done.
+    """
+    from app.core.config import settings as _s
+
+    if not _s.S3_UPLOAD_BUCKET:
+        raise HTTPException(status_code=400, detail="S3 upload not configured on this server")
+
+    result = await db.execute(
+        select(Advertisement).where(
+            Advertisement.id == ad_id,
+            Advertisement.company_id == user.company_id,
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+
+    # Security: ensure the S3 key belongs to this company/ad
+    expected_prefix = f"{_s.S3_UPLOAD_PREFIX}/{user.company_id}/{ad_id}/"
+    if not req.s3_key.startswith(expected_prefix):
+        raise HTTPException(status_code=400, detail="Invalid upload key")
+
+    try:
+        client = _s3_client()
+        s3_obj = client.get_object(Bucket=_s.S3_UPLOAD_BUCKET, Key=req.s3_key)
+        file_bytes = s3_obj["Body"].read()
+    except Exception as e:
+        logger.error("Failed to download from S3 key %s: %s", req.s3_key, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not retrieve uploaded file")
+
+    # Save to EFS
+    file_path = await file_storage.save_bytes(
+        data=file_bytes,
+        subfolder=f"docs/{user.company_id}/{ad_id}",
+        filename=req.filename,
+    )
+
+    # Extract text for AI context
+    from app.services.storage.extractor import extract_text, url_to_disk_path, BACKEND_ROOT
+    disk_path = url_to_disk_path(file_path, BACKEND_ROOT)
+    content   = extract_text(disk_path)
+
+    doc = AdvertisementDocument(
+        company_id=user.company_id,
+        advertisement_id=ad_id,
+        doc_type=req.doc_type,
+        title=req.title,
+        content=content,
+        file_path=file_path,
+        priority=10,
+    )
+    db.add(doc)
+    await db.flush()
+
+    # Clean up the temporary S3 object (best-effort)
+    try:
+        client.delete_object(Bucket=_s.S3_UPLOAD_BUCKET, Key=req.s3_key)
+    except Exception:
+        pass  # non-fatal — lifecycle policy will clean up eventually
+
+    return doc
+
+
 @router.get("/{ad_id}/documents", response_model=List[AdvertisementDocumentOut])
 async def list_protocol_documents(
     ad_id: str,
@@ -447,18 +630,159 @@ async def list_protocol_documents(
     return result.scalars().all()
 
 
+# ─── Background LLM workers ──────────────────────────────────────────────────
+# These run after the HTTP response is sent so CloudFront / WAF timeouts never
+# interrupt them. Each worker opens its own DB session.
+
+async def _bg_generate_strategy(ad_id: str, company_id: str) -> None:
+    """Background task: run Curator + Questionnaire, update ad when done."""
+    from app.db.database import async_session_factory
+    try:
+        async with async_session_factory() as db:
+            result = await db.execute(
+                select(Advertisement).where(Advertisement.id == ad_id)
+            )
+            ad = result.scalar_one_or_none()
+            if not ad:
+                return
+
+            company_docs_result = await db.execute(
+                select(CompanyDocument).where(CompanyDocument.company_id == company_id)
+            )
+            protocol_docs_result = await db.execute(
+                select(AdvertisementDocument).where(
+                    AdvertisementDocument.advertisement_id == ad_id,
+                    AdvertisementDocument.company_id == company_id,
+                )
+            )
+            all_docs = sorted(
+                list(company_docs_result.scalars().all()) + list(protocol_docs_result.scalars().all()),
+                key=lambda d: d.priority, reverse=True,
+            )
+
+            curator = CuratorService(db, company_id)
+            strategy, questionnaire = await asyncio.gather(
+                curator.generate_strategy(ad, all_docs),
+                curator.generate_questionnaire(ad, all_docs),
+            )
+
+            ad.strategy_json  = strategy
+            ad.questionnaire  = questionnaire
+            ad.status         = AdStatus.STRATEGY_CREATED
+            flag_modified(ad, "strategy_json")
+            flag_modified(ad, "questionnaire")
+
+            # Auto voice recommendation for voicebot campaigns
+            if "voicebot" in (ad.ad_type or []):
+                await db.flush()
+                try:
+                    vb_svc = VoicebotAgentService(db)
+                    rec = await vb_svc.recommend_voice(ad_id)
+                    cfg = dict(ad.bot_config or {})
+                    cfg.setdefault("voice_id",           rec["voice_id"])
+                    cfg.setdefault("conversation_style", rec["conversation_style"])
+                    cfg.setdefault("first_message",      rec["first_message"])
+                    cfg["_voice_rec"] = {"voice_name": rec["voice_name"], "reason": rec["reason"]}
+                    ad.bot_config = cfg
+                    flag_modified(ad, "bot_config")
+                except Exception:
+                    pass
+
+            await db.commit()
+    except Exception as e:
+        logger.error("Background strategy generation failed for ad %s: %s", ad_id, e, exc_info=True)
+        # Reset to DRAFT so user can retry
+        try:
+            from app.db.database import async_session_factory as _sf
+            async with _sf() as db2:
+                result = await db2.execute(select(Advertisement).where(Advertisement.id == ad_id))
+                ad = result.scalar_one_or_none()
+                if ad and ad.status == AdStatus.GENERATING:
+                    ad.status = AdStatus.DRAFT
+                    await db2.commit()
+        except Exception:
+            pass
+
+
+async def _bg_generate_creatives(ad_id: str, company_id: str) -> None:
+    """Background task: generate ad creatives."""
+    from app.db.database import async_session_factory
+    from app.services.ai.creative import CreativeService
+    try:
+        async with async_session_factory() as db:
+            result = await db.execute(select(Advertisement).where(Advertisement.id == ad_id))
+            ad = result.scalar_one_or_none()
+            if not ad:
+                return
+            svc = CreativeService(company_id=company_id)
+            creatives = await svc.generate_creatives(ad)
+            ad.output_files = creatives
+            flag_modified(ad, "output_files")
+            await db.commit()
+    except Exception as e:
+        logger.error("Background creative generation failed for ad %s: %s", ad_id, e, exc_info=True)
+
+
+async def _bg_submit_for_review(ad_id: str, company_id: str) -> None:
+    """Background task: run Reviewer pre-analysis and move ad to UNDER_REVIEW."""
+    from app.db.database import async_session_factory
+    try:
+        async with async_session_factory() as db:
+            result = await db.execute(select(Advertisement).where(Advertisement.id == ad_id))
+            ad = result.scalar_one_or_none()
+            if not ad:
+                return
+            reviewer_svc = ReviewerService(db, company_id)
+            review_output = await reviewer_svc.pre_review(ad)
+            ad.website_reqs = review_output.get("website_requirements")
+            ad.ad_details   = review_output.get("ad_details")
+            flag_modified(ad, "website_reqs")
+            flag_modified(ad, "ad_details")
+            ad.status = AdStatus.UNDER_REVIEW
+            await db.commit()
+    except Exception as e:
+        logger.error("Background submit-for-review failed for ad %s: %s", ad_id, e, exc_info=True)
+
+
+async def _bg_generate_website(ad_id: str, company_id: str) -> None:
+    """Background task: generate landing page website."""
+    from app.db.database import async_session_factory
+    from app.services.ai.website_agent import WebsiteAgentService
+    try:
+        async with async_session_factory() as db:
+            result = await db.execute(select(Advertisement).where(Advertisement.id == ad_id))
+            ad = result.scalar_one_or_none()
+            if not ad:
+                return
+            brand_kit_result = await db.execute(
+                select(BrandKit).where(BrandKit.company_id == company_id)
+            )
+            brand_kit = brand_kit_result.scalar_one_or_none()
+            company_result = await db.execute(
+                select(Company).where(Company.id == company_id)
+            )
+            company = company_result.scalar_one_or_none()
+            svc = WebsiteAgentService(company_id=company_id)
+            url = await svc.generate_website(ad, brand_kit, company)
+            ad.output_url = url
+            await db.commit()
+    except Exception as e:
+        logger.error("Background website generation failed for ad %s: %s", ad_id, e, exc_info=True)
+
+
 # ─── AI Strategy Generation (Curator) ────────────────────────────────────────
 
 @router.post("/{ad_id}/generate-strategy", response_model=AdvertisementOut)
 async def generate_strategy(
     ad_id: str,
+    background_tasks: BackgroundTasks,
     user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Trigger the Curator agent to generate a marketing strategy.
-    RAG context = company documents (priority 0) + protocol documents (priority 10).
-    Protocol documents win on priority so campaign-specific context takes precedence.
+    Kick off async strategy generation. Returns immediately with status=generating.
+    The LLM work runs in the background so CloudFront timeouts never apply.
+    Frontend polls GET /{ad_id} until status != generating.
     """
     result = await db.execute(
         select(Advertisement).where(
@@ -470,68 +794,9 @@ async def generate_strategy(
     if not ad:
         raise HTTPException(status_code=404, detail="Advertisement not found")
 
-    # Load company-level documents (baseline context)
-    company_docs_result = await db.execute(
-        select(CompanyDocument).where(CompanyDocument.company_id == user.company_id)
-    )
-    company_docs = company_docs_result.scalars().all()
-
-    # Load campaign-specific protocol documents (high-priority context)
-    protocol_docs_result = await db.execute(
-        select(AdvertisementDocument).where(
-            AdvertisementDocument.advertisement_id == ad_id,
-            AdvertisementDocument.company_id == user.company_id,
-        )
-    )
-    protocol_docs = protocol_docs_result.scalars().all()
-
-    # Merge and sort by priority descending so curator sees highest-priority docs first
-    all_docs = sorted(
-        list(company_docs) + list(protocol_docs),
-        key=lambda d: d.priority,
-        reverse=True,
-    )
-
-    curator = CuratorService(db, user.company_id)
-    try:
-        strategy, questionnaire = await asyncio.gather(
-            curator.generate_strategy(ad, all_docs),
-            curator.generate_questionnaire(ad, all_docs),
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error("Strategy generation failed for ad %s: %s", ad_id, e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Strategy generation failed: {e}")
-
-    ad.strategy_json = strategy
-    ad.questionnaire = questionnaire
-    flag_modified(ad, "strategy_json")
-    flag_modified(ad, "questionnaire")
-    ad.status = AdStatus.STRATEGY_CREATED
-
-    # For voicebot campaigns, auto-populate a voice recommendation so the
-    # Voicebot tab arrives pre-configured. Uses setdefault so it never
-    # overwrites values the publisher already saved manually.
-    if "voicebot" in (ad.ad_type or []):
-        await db.flush()  # make strategy visible to the service's DB query
-        try:
-            vb_svc = VoicebotAgentService(db)
-            rec = await vb_svc.recommend_voice(ad_id)
-            cfg = dict(ad.bot_config or {})
-            cfg.setdefault("voice_id",           rec["voice_id"])
-            cfg.setdefault("conversation_style", rec["conversation_style"])
-            cfg.setdefault("first_message",      rec["first_message"])
-            # Store the explanation so the UI can surface it
-            cfg["_voice_rec"] = {
-                "voice_name": rec["voice_name"],
-                "reason":     rec["reason"],
-            }
-            ad.bot_config = cfg
-            flag_modified(ad, "bot_config")
-        except Exception as _ve:
-            logger.warning("Voice recommendation skipped for ad %s: %s", ad_id, _ve)
-
+    ad.status = AdStatus.GENERATING
+    await db.flush()
+    background_tasks.add_task(_bg_generate_strategy, ad_id, user.company_id)
     return ad
 
 
@@ -540,10 +805,11 @@ async def generate_strategy(
 @router.post("/{ad_id}/submit-for-review", response_model=AdvertisementOut)
 async def submit_for_review(
     ad_id: str,
+    background_tasks: BackgroundTasks,
     user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
     db: AsyncSession = Depends(get_db),
 ):
-    """Move ad to reviewer queue. Reviewer AI pre-processes the strategy."""
+    """Kick off async reviewer pre-analysis. Returns immediately."""
     result = await db.execute(
         select(Advertisement).where(
             Advertisement.id == ad_id,
@@ -554,15 +820,7 @@ async def submit_for_review(
     if not ad:
         raise HTTPException(status_code=404, detail="Advertisement not found")
 
-    reviewer_svc = ReviewerService(db, user.company_id)
-    review_output = await reviewer_svc.pre_review(ad)
-
-    ad.website_reqs = review_output.get("website_requirements")
-    ad.ad_details = review_output.get("ad_details")
-    flag_modified(ad, "website_reqs")
-    flag_modified(ad, "ad_details")
-    ad.status = AdStatus.UNDER_REVIEW
-
+    background_tasks.add_task(_bg_submit_for_review, ad_id, user.company_id)
     return ad
 
 
@@ -797,17 +1055,13 @@ async def distribute_to_meta(
 @router.post("/{ad_id}/generate-creatives", response_model=AdvertisementOut)
 async def generate_creatives(
     ad_id: str,
+    background_tasks: BackgroundTasks,
     user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PROJECT_MANAGER, UserRole.ETHICS_MANAGER])),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Generate ad copy + images.
-    - Claude writes headlines, body copy, CTAs, and image prompts per format.
-    - Amazon Titan Image Generator v2 produces the actual images.
-    - Images saved to outputs/<company_id>/<ad_id>/ and served via /outputs/.
-    - Output stored in ad.output_files as a list of creative dicts.
-
-    Available for approved and published campaigns.
+    Kick off async creative generation. Returns immediately.
+    Frontend polls GET /{ad_id} for output_files to appear.
     """
     result = await db.execute(
         select(Advertisement).where(
@@ -824,21 +1078,7 @@ async def generate_creatives(
             detail="Creatives can only be generated after strategy creation.",
         )
 
-    from app.services.ai.creative import CreativeService
-    from sqlalchemy.orm.attributes import flag_modified
-
-    svc = CreativeService(company_id=user.company_id)
-    try:
-        creatives = await svc.generate_creatives(ad)
-        ad.output_files = creatives
-        flag_modified(ad, "output_files")
-        await db.commit()
-        await db.refresh(ad)
-    except Exception as exc:
-        logger.error("Creative generation failed for ad %s: %s", ad_id, exc, exc_info=True)
-        await db.rollback()
-        raise HTTPException(status_code=500, detail=f"Creative generation failed: {exc}")
-
+    background_tasks.add_task(_bg_generate_creatives, ad_id, user.company_id)
     return ad
 
 
@@ -1356,16 +1596,13 @@ async def serve_website(
 @router.post("/{ad_id}/generate-website", response_model=AdvertisementOut)
 async def generate_website(
     ad_id: str,
+    background_tasks: BackgroundTasks,
     user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PROJECT_MANAGER, UserRole.ETHICS_MANAGER])),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Generate a static HTML landing page from the campaign's marketing strategy,
-    reviewer website requirements, and company brand kit.
-
-    Available once the campaign is approved or published.
-    Saved to outputs/<company_id>/<ad_id>/website/index.html.
-    URL stored in ad.output_url.
+    Kick off async website generation. Returns immediately.
+    Frontend polls GET /{ad_id} for output_url to appear.
     """
     result = await db.execute(
         select(Advertisement).where(
@@ -1382,25 +1619,7 @@ async def generate_website(
             detail="Website can only be generated after strategy creation.",
         )
 
-    brand_kit_result = await db.execute(
-        select(BrandKit).where(BrandKit.company_id == user.company_id)
-    )
-    brand_kit = brand_kit_result.scalar_one_or_none()
-
-    company_result = await db.execute(
-        select(Company).where(Company.id == user.company_id)
-    )
-    company = company_result.scalar_one_or_none()
-
-    from app.services.ai.website_agent import WebsiteAgentService
-    svc = WebsiteAgentService(company_id=user.company_id)
-    try:
-        url = await svc.generate_website(ad, brand_kit, company)
-    except Exception as exc:
-        logger.error("Website generation failed for ad %s: %s", ad_id, exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Website generation failed: {exc}")
-
-    ad.output_url = url
+    background_tasks.add_task(_bg_generate_website, ad_id, user.company_id)
     return ad
 
 

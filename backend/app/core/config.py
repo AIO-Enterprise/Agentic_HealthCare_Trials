@@ -83,6 +83,12 @@ class Settings(BaseSettings):
     STATIC_DIR: str = "./static"
     STATIC_URL: str = "/static"
 
+    # S3 — optional. When set, protocol document uploads use S3 pre-signed URLs
+    # so files bypass CloudFront WAF body-size limits entirely.
+    # Leave blank for local/dev — falls back to direct multipart upload.
+    S3_UPLOAD_BUCKET: Optional[str] = None
+    S3_UPLOAD_PREFIX: str = "ad-documents"  # key prefix inside the bucket
+
     class Config:
         env_file = _ENV_FILE
         extra   = "ignore"   # ignore VITE_* and other frontend-only vars in .env

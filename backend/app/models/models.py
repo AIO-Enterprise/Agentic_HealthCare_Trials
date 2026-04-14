@@ -42,6 +42,7 @@ class AdType(str, enum.Enum):
 
 class AdStatus(str, enum.Enum):
     DRAFT = "draft"
+    GENERATING = "generating"       # LLM task running in background
     STRATEGY_CREATED = "strategy_created"
     UNDER_REVIEW = "under_review"
     ETHICS_REVIEW = "ethics_review"
@@ -225,9 +226,10 @@ class Advertisement(Base):
     output_files      = Column(JSON, nullable=True)
     bot_config        = Column(JSON, nullable=True)
     questionnaire     = Column(JSON, nullable=True)         # {questions: [{id, text, type, options, required}]}
-    trial_location    = Column(JSON, nullable=True)         # [{ country, city }]
-    patients_required = Column(Integer, nullable=True)      # total patients needed for trial
-    created_at        = Column(DateTime, default=_now)
+    trial_location        = Column(JSON, nullable=True)     # [{ country, city }]
+    patients_required     = Column(Integer, nullable=True)  # total patients needed for trial
+    special_instructions  = Column(Text, nullable=True)     # free-text notes from study coordinator
+    created_at            = Column(DateTime, default=_now)
     updated_at        = Column(DateTime, default=_now, onupdate=_now)
 
     company            = relationship("Company", back_populates="advertisements")

@@ -29,6 +29,7 @@ class AdTypeEnum(str, Enum):
 
 class AdStatusEnum(str, Enum):
     draft = "draft"
+    generating = "generating"
     strategy_created = "strategy_created"
     under_review = "under_review"
     ethics_review = "ethics_review"
@@ -201,6 +202,7 @@ QUESTIONNAIRE_CAMPAIGN_CATEGORIES = {"recruitment", "survey", "hiring", "clinica
 class AdvertisementCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=512)
     ad_type: List[AdTypeEnum]
+    campaign_category: Optional[str] = None
     budget: Optional[float] = None
     duration: Optional[str] = None
     trial_start_date: Optional[date] = None
@@ -209,6 +211,7 @@ class AdvertisementCreate(BaseModel):
     target_audience: Optional[Dict[str, Any]] = None
     trial_location: Optional[List[Dict[str, Any]]] = None  # [{ country, city }]
     patients_required: Optional[int] = None
+    special_instructions: Optional[str] = None
 
 class AdvertisementOut(BaseModel):
     id: str
@@ -232,6 +235,7 @@ class AdvertisementOut(BaseModel):
     patients_required: Optional[int] = None
     trial_start_date: Optional[date] = None
     trial_end_date: Optional[date] = None
+    special_instructions: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -252,6 +256,47 @@ class AdvertisementUpdate(BaseModel):
 
 class QuestionnaireUpdate(BaseModel):
     questionnaire: Dict[str, Any]
+
+
+# ─── Chunked Upload Schemas ───────────────────────────────────────────────────
+
+class StartUploadRequest(BaseModel):
+    doc_type:     str
+    title:        str
+    filename:     str
+    content_type: str
+    total_chunks: int
+
+class ChunkUploadRequest(BaseModel):
+    upload_id:   str
+    chunk_index: int
+    data:        str   # base64-encoded chunk bytes
+
+class FinalizeUploadRequest(BaseModel):
+    upload_id: str
+
+
+# ─── S3 Pre-signed Upload Schemas ────────────────────────────────────────────
+
+class PresignRequest(BaseModel):
+    doc_type:     str
+    title:        str
+    filename:     str
+    content_type: str
+    file_size:    int   # bytes — used for validation before generating URL
+
+class PresignResponse(BaseModel):
+    method:        str                   # "s3" | "direct"
+    upload_url:    Optional[str] = None  # pre-signed PUT URL (S3 only)
+    s3_key:        Optional[str] = None  # key to pass back to /confirm (S3 only)
+    content_type:  Optional[str] = None  # effective MIME type — must match the PUT header exactly
+
+class ConfirmUploadRequest(BaseModel):
+    s3_key:       str
+    doc_type:     str
+    title:        str
+    filename:     str
+    content_type: str
 
 
 # ─── Review Schemas ───────────────────────────────────────────────────────────

@@ -99,6 +99,7 @@ async def init_db():
                 "ALTER TABLE company_documents ADD COLUMN priority INTEGER DEFAULT 0;",
                 "ALTER TABLE company_documents ADD COLUMN version INTEGER DEFAULT 1;",
                 "ALTER TABLE advertisements ADD COLUMN campaign_category VARCHAR(64);",
+                "ALTER TABLE advertisements ADD COLUMN special_instructions TEXT;",
                 "ALTER TABLE advertisements ADD COLUMN questionnaire JSON;",
                 "ALTER TABLE advertisements ADD COLUMN duration VARCHAR(128);",
                 "ALTER TABLE advertisements ADD COLUMN trial_location JSON;",
@@ -150,6 +151,8 @@ async def init_db():
             "ALTER TABLE company_documents ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1;")
         await _add_column_if_missing(conn,
             "ALTER TABLE advertisements ADD COLUMN IF NOT EXISTS campaign_category VARCHAR(64);")
+        await _add_column_if_missing(conn,
+            "ALTER TABLE advertisements ADD COLUMN IF NOT EXISTS special_instructions TEXT;")
         await _add_column_if_missing(conn,
             "ALTER TABLE advertisements ADD COLUMN IF NOT EXISTS questionnaire JSON;")
         await _add_column_if_missing(conn,
@@ -290,6 +293,11 @@ async def init_db():
                     ))
                 except Exception:
                     pass  # value already exists
+            # Add GENERATING to adstatus enum if it doesn't exist yet
+            try:
+                await _ac.execute(_sql("ALTER TYPE adstatus ADD VALUE IF NOT EXISTS 'generating';"))
+            except Exception:
+                pass
 
         # Normalise role column to enum member NAMES (what SQLAlchemy stores).
         await _run_migration(conn, "UPDATE users SET role = 'STUDY_COORDINATOR' WHERE role IN ('ADMIN', 'study_coordinator');")

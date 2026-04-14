@@ -99,7 +99,16 @@ export default function OnboardingPage() {
   const [brandPdfFile,   setBrandPdfFile]   = useState(null);
 
   // ── Step 5: training ──────────────────────────────────────────────────────
-  const [trainingDone, setTrainingDone] = useState(false);
+  const [trainingDone,   setTrainingDone]   = useState(false);
+
+  // ── Retry-safe completion flags ───────────────────────────────────────────
+  // Track what was saved so a retry skips only truly completed steps and
+  // never duplicates uploads. Persists across clicks (component stays mounted).
+  const [registered,    setRegistered]    = useState(false);
+  const [locationsSaved, setLocationsSaved] = useState(false);
+  const [logoSaved,      setLogoSaved]     = useState(false);
+  const [savedDocCount,  setSavedDocCount] = useState(0);  // docs uploaded so far
+  const [brandKitSaved,  setBrandKitSaved] = useState(false);
 
   // ── Navigation ────────────────────────────────────────────────────────────
   const goToStep = (i) => {
@@ -120,10 +129,8 @@ export default function OnboardingPage() {
     setError("");
     setShowSignIn(false);
     try {
-      // 1. Register company + admin.
-      //    If companyId is already set (retry after a failed training attempt),
-      //    skip registration and go straight to login.
-      if (!companyId) {
+      // 1. Register company + admin (skip on retry — company already exists).
+      if (!registered) {
         const registerRes = await onboardingAPI.register({
           company_name:   form.company_name,
           industry:       form.industry,
@@ -133,9 +140,10 @@ export default function OnboardingPage() {
           admin_name:     form.admin_name,
         });
         setCompanyId(registerRes.company_id);
+        setRegistered(true);
       }
 
-      // 2. Login — backend verifies company name and role.
+      // 2. Login — always re-login to get a fresh token on each attempt.
       const loginRes = await authAPI.login(
         form.admin_email,
         form.admin_password,
@@ -143,11 +151,10 @@ export default function OnboardingPage() {
         "study_coordinator",
       );
 
-      // 3. Persist token to localStorage immediately so that uploadLogo and
-      //    uploadDocument can read it synchronously.
+      // 3. Persist token immediately so subsequent API calls use it.
       localStorage.setItem("token", loginRes.access_token);
 
-      // 4. Hydrate AuthContext so ProtectedRoute allows the /admin redirect.
+      // 4. Hydrate AuthContext.
       hydrateUser({
         id:              loginRes.user_id,
         role:            loginRes.role,
@@ -155,40 +162,32 @@ export default function OnboardingPage() {
         companyName:     loginRes.company_name,
         companyIndustry: form.industry || null,
         token:           loginRes.access_token,
-        onboarded:       false, // will be updated to true after training succeeds below
+        onboarded:       false,
       });
 
-      // 5. Save locations — token is now in localStorage so auth header is set.
-      //    Skipped on retry — locations were already saved.
-      if (!companyId && locations.length > 0) {
+      // 5. Save locations (idempotent PATCH — safe to retry).
+      //    Skipped only if it already succeeded.
+      if (!locationsSaved && locations.length > 0) {
         await companyAPI.updateLocations(locations);
+        setLocationsSaved(true);
       }
 
-      // 6. Upload logo — token is now in localStorage so auth header is set.
-      //    Skipped on retry (logo was already uploaded in the first attempt).
-      if (logoFile && !companyId) {
+      // 6. Upload logo (skip on retry if already uploaded).
+      if (logoFile && !logoSaved) {
         await onboardingAPI.uploadLogo(logoFile);
+        setLogoSaved(true);
       }
 
-      // 7. Upload documents one by one.
-      //    Skipped on retry — documents were already uploaded.
-      if (!companyId) {
-        for (const doc of docs) {
-          await onboardingAPI.uploadDocument(
-            doc.doc_type,
-            doc.title,
-            null,
-            doc.file,
-          );
-        }
+      // 7. Upload documents — resume from where we left off on retry.
+      //    savedDocCount tracks how many were successfully uploaded.
+      for (let i = savedDocCount; i < docs.length; i++) {
+        const doc = docs[i];
+        await onboardingAPI.uploadDocument(doc.doc_type, doc.title, null, doc.file);
+        setSavedDocCount(i + 1);
       }
 
-      // 8. Create brand kit — only if the user made a selection or uploaded a PDF.
-      //    If the user skipped, all color fields are null and there is nothing
-      //    meaningful to save, so we skip the API call entirely and leave the
-      //    platform running on its default theme.
-      //    Skipped on retry — brand kit was already created.
-      if (!companyId) {
+      // 8. Create brand kit (skip on retry if already created).
+      if (!brandKitSaved) {
         const hasBrandData = brand.primaryColor || brand.accentColor || brandPdfFile || selectedPreset;
         if (hasBrandData) {
           const createdBrandKit = await brandKitAPI.create({
@@ -204,10 +203,11 @@ export default function OnboardingPage() {
           });
           applyBrandTheme(createdBrandKit);
         }
+        setBrandKitSaved(true);
       }
 
-      // 9. Trigger AI skill initialization — generates customized Curator + Reviewer skills.
-      //    This is the step that gates account activation. Always run on every attempt.
+      // 9. Trigger AI skill initialization — marks company onboarded + runs in background.
+      //    Always run on every attempt (idempotent — backend checks onboarded flag).
       await onboardingAPI.triggerTraining();
 
       // Mark onboarded in context so ProtectedRoute allows dashboard access.

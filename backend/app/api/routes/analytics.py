@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List, Optional
 
-from app.db.database import get_db
+from app.db.database import get_db, async_session_factory
 from app.models.models import (
     User, UserRole, Advertisement, AdAnalytics, OptimizerLog, Review
 )
@@ -53,35 +53,34 @@ async def get_analytics(
 async def trigger_optimization(
     ad_id: str,
     user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER, UserRole.PROJECT_MANAGER])),
-    db: AsyncSession = Depends(get_db),
 ):
     """
     Trigger the Optimizer Automation module.
-    
-    Analyzes performance data with weighted factors:
-    - Websites: user retention, click rate, follow-through rate, call duration
-    - Ads: click rate, views, demographics, likes
-    
-    Uses Reviewer context for situational awareness.
-    Returns suggestions for human-in-the-loop review.
+
+    Structured in three phases so the DB connection is NOT held during the
+    Claude API call (which can take 10–30 s and would cause SQLite lock timeouts):
+
+    Phase 1 — Read: fetch ad, analytics, reviews → close session
+    Phase 2 — AI:   call Claude with no DB connection open
+    Phase 3 — Write: persist the optimizer log → close session
     """
-    # Get ad
-    ad_result = await db.execute(select(Advertisement).where(Advertisement.id == ad_id))
-    ad = ad_result.scalar_one_or_none()
-    if not ad:
-        raise HTTPException(status_code=404, detail="Advertisement not found")
+    # ── Phase 1: read data, release DB ───────────────────────────────────────
+    async with async_session_factory() as db:
+        ad_result = await db.execute(select(Advertisement).where(Advertisement.id == ad_id))
+        ad = ad_result.scalar_one_or_none()
+        if not ad:
+            raise HTTPException(status_code=404, detail="Advertisement not found")
 
-    # Get analytics data
-    analytics_result = await db.execute(
-        select(AdAnalytics).where(AdAnalytics.advertisement_id == ad_id)
-    )
-    analytics = analytics_result.scalars().all()
+        analytics_result = await db.execute(
+            select(AdAnalytics).where(AdAnalytics.advertisement_id == ad_id)
+        )
+        analytics = list(analytics_result.scalars().all())
 
-    # Get reviewer context
-    review_result = await db.execute(
-        select(Review).where(Review.advertisement_id == ad_id)
-    )
-    reviews = review_result.scalars().all()
+        review_result = await db.execute(
+            select(Review).where(Review.advertisement_id == ad_id)
+        )
+        reviews = list(review_result.scalars().all())
+    # session closed — no DB lock held from this point
 
     optimizer = OptimizerService(db, user.company_id)
     try:
@@ -119,7 +118,6 @@ async def regenerate_optimizer_item(
     ad_id: str,
     body: RegenerateItemRequest,
     user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER, UserRole.PROJECT_MANAGER])),
-    db: AsyncSession = Depends(get_db),
 ):
     """
     Regenerate a single optimization item using its stored AI prompt.

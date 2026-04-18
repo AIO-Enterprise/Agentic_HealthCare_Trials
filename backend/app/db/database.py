@@ -119,6 +119,7 @@ async def init_db():
                 "ALTER TABLE ad_analytics ADD COLUMN cpm REAL;",
                 "ALTER TABLE ad_analytics ADD COLUMN date_label VARCHAR(32);",
                 "ALTER TABLE ad_analytics ADD COLUMN source VARCHAR(16) DEFAULT 'local';",
+                "ALTER TABLE optimizer_logs ADD COLUMN status VARCHAR(16) DEFAULT 'done';",
             ]
             for stmt in _sqlite_cols:
                 try:
@@ -185,6 +186,8 @@ async def init_db():
             "ALTER TABLE ad_analytics ADD COLUMN IF NOT EXISTS date_label VARCHAR(32);")
         await _add_column_if_missing(conn,
             "ALTER TABLE ad_analytics ADD COLUMN IF NOT EXISTS source VARCHAR(16) DEFAULT 'local';")
+        await _add_column_if_missing(conn,
+            "ALTER TABLE optimizer_logs ADD COLUMN IF NOT EXISTS status VARCHAR(16) DEFAULT 'done';")
 
         # chat_sessions.campaign_id — added after initial table creation.
         await _run_migration(conn,

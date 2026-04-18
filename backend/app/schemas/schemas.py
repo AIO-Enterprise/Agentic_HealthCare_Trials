@@ -361,7 +361,8 @@ class AnalyticsOut(BaseModel):
 
 class OptimizerSuggestion(BaseModel):
     advertisement_id: str
-    suggestions: Dict[str, Any]
+    status: str = "done"
+    suggestions: Optional[Dict[str, Any]] = None
     context: Optional[Dict[str, Any]] = None
 
 class OptimizerDecision(BaseModel):

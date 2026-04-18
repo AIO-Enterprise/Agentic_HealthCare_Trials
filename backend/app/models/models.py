@@ -314,7 +314,8 @@ class OptimizerLog(Base):
 
     id               = Column(String, primary_key=True, default=_uuid)
     advertisement_id = Column(String, ForeignKey("advertisements.id"), nullable=False)
-    suggestions      = Column(JSON, nullable=False)
+    status           = Column(String(16), default="pending")   # pending | done | failed
+    suggestions      = Column(JSON, nullable=True)
     context          = Column(JSON, nullable=True)
     human_decision   = Column(String(32), nullable=True)
     applied_changes  = Column(JSON, nullable=True)

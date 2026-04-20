@@ -3689,6 +3689,9 @@ function PublisherAnalytics({ ads, suggestions, setSuggestions, optimizing, setO
     if (m.includes("spend") || m.includes("amount spent"))
       return `$${totals.spend.toFixed(2)}`;
 
+    if (m.includes("conversion rate"))
+      return totals.clicks > 0 ? `${((totals.conversions / totals.clicks) * 100).toFixed(2)}%` : "–";
+
     if (m.includes("conversion") || m.includes("enrolled participant") || m.includes("total enrolled") || m.includes("enrolled"))
       return totals.conversions.toLocaleString();
 

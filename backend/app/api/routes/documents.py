@@ -9,8 +9,11 @@ Used by Study Coordinator (My Company) and Ethics Manager (Document Updation).
 
 import asyncio
 import os
+import re
 import mimetypes
 import logging
+import secrets
+import traceback
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, BackgroundTasks
 from fastapi.responses import FileResponse
@@ -20,12 +23,30 @@ from typing import List
 
 from app.db.database import get_db, async_session_factory
 from app.models.models import User, UserRole, CompanyDocument
-from app.schemas.schemas import DocumentCreate, DocumentOut, DocumentUpdate
+from app.schemas.schemas import (
+    DocumentCreate, DocumentOut, DocumentUpdate,
+    PresignRequest, PresignResponse, ConfirmUploadRequest,
+)
 from app.core.security import require_roles, get_current_user, decode_token
 from app.services.storage import file_storage
 from app.services.storage.extractor import extract_text, url_to_disk_path, BACKEND_ROOT
+import uuid as uuid_mod
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_filename(original: str | None) -> str:
+    """
+    Build a collision-free, URL-safe filename.
+    Strips directory components, replaces non-[A-Za-z0-9._-] chars with '_',
+    and prepends a short random token so concurrent uploads of the same name
+    never overwrite each other.
+    """
+    base = os.path.basename(original or "upload")
+    stem, ext = os.path.splitext(base)
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._-") or "file"
+    ext  = re.sub(r"[^A-Za-z0-9.]+", "", ext).lower()
+    return f"{secrets.token_hex(4)}_{stem}{ext}"
 
 
 async def _background_train(company_id: str) -> None:
@@ -142,14 +163,32 @@ async def upload_document(
             detail="Invalid file type. Accepted: PDF, DOCX, DOC, TXT, MD.",
         )
 
-    file_path = await file_storage.save(
-        file=file,
-        subfolder=f"docs/{user.company_id}",
-        filename=file.filename,
-    )
+    safe_name = _safe_filename(file.filename)
+    try:
+        file_path = await file_storage.save(
+            file=file,
+            subfolder=f"docs/{user.company_id}",
+            filename=safe_name,
+        )
+    except Exception as exc:
+        logger.error(
+            "Document upload: file_storage.save failed (company=%s, filename=%s): %s\n%s",
+            user.company_id, file.filename, exc, traceback.format_exc(),
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not save file to storage: {exc}",
+        )
 
     disk_path = url_to_disk_path(file_path, BACKEND_ROOT)
-    content   = await asyncio.to_thread(extract_text, disk_path)
+    try:
+        content = await asyncio.to_thread(extract_text, disk_path)
+    except Exception as exc:
+        logger.warning(
+            "Document upload: extract_text failed for %s: %s — saving with empty content",
+            disk_path, exc,
+        )
+        content = None
 
     doc = CompanyDocument(
         company_id=user.company_id,
@@ -260,3 +299,161 @@ async def delete_document(
         raise HTTPException(status_code=404, detail="Document not found")
     await db.delete(doc)
     return {"detail": "Document deleted"}
+
+
+# ─── S3 Pre-signed Upload (WAF-safe company-document upload) ──────────────────
+# Mirrors the advertisement-document flow: browser PUTs directly to S3 so the
+# multipart body never traverses CloudFront WAF, which blocks our binary PDF/
+# DOCX uploads via the Core Rule Set (size + XSS body rules).
+#
+# Flow:  frontend → POST /documents/presign  (small JSON, WAF-safe)
+#        frontend → PUT  <s3_url>            (direct to S3, WAF bypassed)
+#        frontend → POST /documents/confirm  (backend fetches from S3, saves)
+
+_MAX_COMPANY_DOC_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
+def _s3_client():
+    """Return a boto3 S3 client using the configured AWS credentials/region."""
+    import boto3
+    from botocore.config import Config as _BotocoreConfig
+    from app.core.config import settings as _s
+    kwargs: dict = {
+        "region_name": _s.AWS_REGION,
+        "config": _BotocoreConfig(signature_version="s3v4"),
+    }
+    if _s.AWS_ACCESS_KEY_ID:
+        kwargs["aws_access_key_id"]     = _s.AWS_ACCESS_KEY_ID
+        kwargs["aws_secret_access_key"] = _s.AWS_SECRET_ACCESS_KEY
+    return boto3.client("s3", **kwargs)
+
+
+def _effective_content_type(req_ct: str, filename: str) -> str:
+    """If the browser sent application/octet-stream, infer the real MIME from extension."""
+    if req_ct != "application/octet-stream":
+        return req_ct
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return {
+        "pdf":  "application/pdf",
+        "doc":  "application/msword",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "txt":  "text/plain",
+        "md":   "text/markdown",
+    }.get(ext, req_ct)
+
+
+@router.post("/presign", response_model=PresignResponse)
+async def get_company_document_presign_url(
+    req:  PresignRequest,
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.ETHICS_MANAGER])),
+):
+    """
+    Return a pre-signed S3 PUT URL so the browser can upload directly to S3,
+    bypassing CloudFront WAF body inspection.
+
+    Returns method="direct" when S3_UPLOAD_BUCKET is unset so localhost dev
+    keeps working via the legacy multipart /documents/upload endpoint.
+    """
+    from app.core.config import settings as _s
+
+    if req.file_size > _MAX_COMPANY_DOC_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large (max {_MAX_COMPANY_DOC_BYTES // (1024*1024)} MB)",
+        )
+
+    effective_ct = _effective_content_type(req.content_type, req.filename)
+    if effective_ct not in ALLOWED_DOC_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid file type. Accepted: PDF, DOCX, DOC, TXT, MD.",
+        )
+
+    if not _s.S3_UPLOAD_BUCKET:
+        return PresignResponse(method="direct")
+
+    safe_name = _safe_filename(req.filename)
+    s3_key = f"{_s.S3_UPLOAD_PREFIX}/company/{user.company_id}/{uuid_mod.uuid4()}_{safe_name}"
+    try:
+        client = _s3_client()
+        upload_url = client.generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket":      _s.S3_UPLOAD_BUCKET,
+                "Key":         s3_key,
+                "ContentType": effective_ct,
+            },
+            ExpiresIn=3600,
+        )
+    except Exception as e:
+        logger.error("Failed to generate company-doc S3 pre-signed URL: %s\n%s", e, traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Could not generate upload URL")
+
+    return PresignResponse(method="s3", upload_url=upload_url, s3_key=s3_key, content_type=effective_ct)
+
+
+@router.post("/confirm", response_model=DocumentOut)
+async def confirm_company_document_upload(
+    req:  ConfirmUploadRequest,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.ETHICS_MANAGER])),
+    db:   AsyncSession = Depends(get_db),
+):
+    """
+    Called after the browser finishes PUTting the file to S3.
+    Downloads from S3, extracts text, saves to EFS, creates the DB row,
+    then kicks off AI skill retraining in the background.
+    """
+    from app.core.config import settings as _s
+
+    if not _s.S3_UPLOAD_BUCKET:
+        raise HTTPException(status_code=400, detail="S3 upload not configured on this server")
+
+    expected_prefix = f"{_s.S3_UPLOAD_PREFIX}/company/{user.company_id}/"
+    if not req.s3_key.startswith(expected_prefix):
+        raise HTTPException(status_code=400, detail="Invalid upload key")
+
+    try:
+        client = _s3_client()
+        s3_obj = client.get_object(Bucket=_s.S3_UPLOAD_BUCKET, Key=req.s3_key)
+        file_bytes = s3_obj["Body"].read()
+    except Exception as e:
+        logger.error("Failed to download company doc from S3 key %s: %s\n%s", req.s3_key, e, traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Could not retrieve uploaded file")
+
+    safe_name = _safe_filename(req.filename)
+    try:
+        file_path = await file_storage.save_bytes(
+            data=file_bytes,
+            subfolder=f"docs/{user.company_id}",
+            filename=safe_name,
+        )
+    except Exception as e:
+        logger.error("Failed to persist company doc to EFS (company=%s): %s\n%s", user.company_id, e, traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Could not save file to storage: {e}")
+
+    disk_path = url_to_disk_path(file_path, BACKEND_ROOT)
+    try:
+        content = await asyncio.to_thread(extract_text, disk_path)
+    except Exception as exc:
+        logger.warning("confirm: extract_text failed for %s: %s", disk_path, exc)
+        content = None
+
+    doc = CompanyDocument(
+        company_id=user.company_id,
+        doc_type=req.doc_type,
+        title=req.title,
+        content=content,
+        file_path=file_path,
+    )
+    db.add(doc)
+    await db.flush()
+
+    # Best-effort cleanup of the staging S3 object
+    try:
+        client.delete_object(Bucket=_s.S3_UPLOAD_BUCKET, Key=req.s3_key)
+    except Exception:
+        pass
+
+    background_tasks.add_task(_background_train, user.company_id)
+    return doc

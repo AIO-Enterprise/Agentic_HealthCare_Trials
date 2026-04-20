@@ -814,6 +814,11 @@ async def _bg_generate_website(ad_id: str, company_id: str) -> None:
             svc = WebsiteAgentService(company_id=company_id)
             url = await svc.generate_website(ad, brand_kit, company)
             ad.output_url = url
+            # The URL is deterministic (/outputs/{company}/{ad}/website/index.html)
+            # so regenerating produces the same value and SQLAlchemy would skip the
+            # UPDATE, meaning onupdate=_now never fires on updated_at and the
+            # frontend poll times out. Force the UPDATE by explicitly touching updated_at.
+            ad.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             await db.commit()
     except Exception as e:
         logger.error("Background website generation failed for ad %s: %s", ad_id, e, exc_info=True)

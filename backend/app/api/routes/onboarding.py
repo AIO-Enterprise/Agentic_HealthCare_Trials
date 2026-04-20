@@ -14,6 +14,7 @@ File storage note:
 
 import asyncio
 import logging
+import traceback
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
@@ -28,6 +29,9 @@ from app.core.security import hash_password, require_roles
 from app.services.storage import file_storage
 from app.services.storage.extractor import extract_text, url_to_disk_path, BACKEND_ROOT
 from app.services.training.trainer import TrainingService
+# Reuse the same filename sanitiser as /documents/upload so behaviour matches
+# across onboarding and My Company uploads.
+from app.api.routes.documents import _safe_filename
 
 logger = logging.getLogger(__name__)
 
@@ -118,14 +122,33 @@ async def upload_document(
     """
     file_path = None
     if file:
-        file_path = await file_storage.save(
-            file=file,
-            subfolder=f"docs/{user.company_id}",
-            filename=file.filename,
-        )
+        safe_name = _safe_filename(file.filename)
+        try:
+            file_path = await file_storage.save(
+                file=file,
+                subfolder=f"docs/{user.company_id}",
+                filename=safe_name,
+            )
+        except Exception as exc:
+            logger.error(
+                "Onboarding upload: file_storage.save failed (company=%s, filename=%s): %s\n%s",
+                user.company_id, file.filename, exc, traceback.format_exc(),
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Could not save file to storage: {exc}",
+            )
+
         if not content:
             disk_path = url_to_disk_path(file_path, BACKEND_ROOT)
-            content   = await asyncio.to_thread(extract_text, disk_path)
+            try:
+                content = await asyncio.to_thread(extract_text, disk_path)
+            except Exception as exc:
+                logger.warning(
+                    "Onboarding upload: extract_text failed for %s: %s — saving with empty content",
+                    disk_path, exc,
+                )
+                content = None
 
     doc = CompanyDocument(
         company_id=user.company_id,

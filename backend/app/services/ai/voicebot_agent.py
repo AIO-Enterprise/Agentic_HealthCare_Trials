@@ -295,9 +295,9 @@ class VoicebotAgentService:
             }
         """
         ad = await self._get_advertisement(advertisement_id)
-        strategy = ad.strategy_json or {}
+        strategy = ad.strategy_json if isinstance(ad.strategy_json, dict) else {}
         target_audience = strategy.get("target_audience", {})
-        messaging = strategy.get("messaging", {})
+        messaging = strategy.get("messaging", {}) or {}
         executive_summary = strategy.get("executive_summary", "")
 
         voices_catalogue = [
@@ -464,10 +464,11 @@ Respond with ONLY a valid JSON object, no markdown:
         skill = skill_result.scalar_one_or_none()
 
         # ── Pull campaign fields ──────────────────────────────────────────────
-        bot_config  : Dict[str, Any] = ad.bot_config   or {}
-        strategy    : Dict[str, Any] = ad.strategy_json or {}
-        website_reqs: Dict[str, Any] = ad.website_reqs  or {}
-        messaging   : Dict[str, Any] = strategy.get("messaging", {}) or {}
+        bot_config  : Dict[str, Any] = ad.bot_config   if isinstance(ad.bot_config,   dict) else {}
+        strategy    : Dict[str, Any] = ad.strategy_json if isinstance(ad.strategy_json, dict) else {}
+        website_reqs: Dict[str, Any] = ad.website_reqs  if isinstance(ad.website_reqs,  dict) else {}
+        messaging   : Dict[str, Any] = strategy.get("messaging") or {}
+        messaging = messaging if isinstance(messaging, dict) else {}
 
         bot_name   = bot_config.get("name", "Assistant")
         style      = bot_config.get("conversation_style", "professional and helpful")
@@ -571,8 +572,11 @@ Respond with ONLY a valid JSON object, no markdown:
                 "If the caller answers in a way that makes them ineligible, be empathetic and honest.\n"
             ]
             for i, q in enumerate(questions, 1):
+                if not isinstance(q, dict):
+                    continue
                 q_text    = q.get("text", "")
                 q_options = q.get("options", [])
+                q_options = q_options if isinstance(q_options, list) else []
                 q_req     = q.get("required", True)
                 line = f"Q{i}: {q_text}"
                 if q_options:

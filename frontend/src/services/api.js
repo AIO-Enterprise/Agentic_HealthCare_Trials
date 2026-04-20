@@ -630,6 +630,9 @@ export const analyticsAPI = {
   triggerOptimize: (adId) =>
     request(`/analytics/${adId}/optimize`, { method: "POST" }),
 
+  getOptimizeStatus: (adId, logId) =>
+    request(`/analytics/${adId}/optimize/status?log_id=${logId}`),
+
   regenerateItem: (adId, prompt, itemType = "general") =>
     request(`/analytics/${adId}/regenerate-item`, {
       method: "POST",

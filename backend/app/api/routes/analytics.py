@@ -14,7 +14,7 @@ import logging
 import re
 import traceback
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 logger = logging.getLogger(__name__)
 from pydantic import BaseModel
@@ -49,62 +49,106 @@ async def get_analytics(
     return result.scalars().all()
 
 
-@router.post("/{ad_id}/optimize", response_model=OptimizerSuggestion)
+async def _bg_run_optimizer(log_id: str, ad_id: str, company_id: str) -> None:
+    """Background task: run optimizer, write results back to OptimizerLog."""
+    from app.db.database import async_session_factory
+    try:
+        async with async_session_factory() as db:
+            ad_result = await db.execute(select(Advertisement).where(Advertisement.id == ad_id))
+            ad = ad_result.scalar_one_or_none()
+            if not ad:
+                return
+
+            analytics_result = await db.execute(
+                select(AdAnalytics).where(AdAnalytics.advertisement_id == ad_id)
+            )
+            analytics = analytics_result.scalars().all()
+
+            review_result = await db.execute(
+                select(Review).where(Review.advertisement_id == ad_id)
+            )
+            reviews = review_result.scalars().all()
+
+            optimizer = OptimizerService(db, company_id)
+            suggestions = await optimizer.generate_suggestions(ad, analytics, reviews)
+
+            log_result = await db.execute(select(OptimizerLog).where(OptimizerLog.id == log_id))
+            log = log_result.scalar_one_or_none()
+            if log:
+                log.status      = "done"
+                log.suggestions = suggestions["suggestions"]
+                log.context     = suggestions.get("context")
+            await db.commit()
+    except Exception as exc:
+        logger.error("Background optimizer failed for ad %s: %s\n%s", ad_id, exc, traceback.format_exc())
+        try:
+            from app.db.database import async_session_factory as _sf
+            async with _sf() as db2:
+                log_result = await db2.execute(select(OptimizerLog).where(OptimizerLog.id == log_id))
+                log = log_result.scalar_one_or_none()
+                if log:
+                    log.status = "failed"
+                    await db2.commit()
+        except Exception:
+            pass
+
+
+@router.post("/{ad_id}/optimize")
 async def trigger_optimization(
     ad_id: str,
+    background_tasks: BackgroundTasks,
     user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER, UserRole.PROJECT_MANAGER])),
 ):
     """
-    Trigger the Optimizer Automation module.
-
-    Structured in three phases so the DB connection is NOT held during the
-    Claude API call (which can take 10–30 s and would cause SQLite lock timeouts):
-
-    Phase 1 — Read: fetch ad, analytics, reviews → close session
-    Phase 2 — AI:   call Claude with no DB connection open
-    Phase 3 — Write: persist the optimizer log → close session
+    Kick off async optimizer run. Returns immediately with {"log_id", "status": "pending"}.
+    Poll GET /{ad_id}/optimize/status?log_id=<id> until status is "done" or "failed".
     """
-    # ── Phase 1: read data, release DB ───────────────────────────────────────
-    async with async_session_factory() as db:
-        ad_result = await db.execute(select(Advertisement).where(Advertisement.id == ad_id))
-        ad = ad_result.scalar_one_or_none()
-        if not ad:
-            raise HTTPException(status_code=404, detail="Advertisement not found")
+    ad_result = await db.execute(select(Advertisement).where(Advertisement.id == ad_id))
+    ad = ad_result.scalar_one_or_none()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Advertisement not found")
 
-        analytics_result = await db.execute(
-            select(AdAnalytics).where(AdAnalytics.advertisement_id == ad_id)
+    log = OptimizerLog(
+        advertisement_id=ad_id,
+        status="pending",
+        suggestions=None,
+        context=None,
+    )
+    db.add(log)
+    await db.flush()
+    log_id = log.id
+    await db.commit()
+
+    background_tasks.add_task(_bg_run_optimizer, log_id, ad_id, user.company_id)
+    return {"log_id": log_id, "status": "pending"}
+
+
+@router.get("/{ad_id}/optimize/status", response_model=OptimizerSuggestion)
+async def get_optimization_status(
+    ad_id: str,
+    log_id: str,
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER, UserRole.PROJECT_MANAGER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Poll for optimizer results. Returns status: pending | done | failed.
+    When status is "done", suggestions and context are populated.
+    """
+    result = await db.execute(
+        select(OptimizerLog).where(
+            OptimizerLog.id == log_id,
+            OptimizerLog.advertisement_id == ad_id,
         )
-        analytics = list(analytics_result.scalars().all())
-
-        review_result = await db.execute(
-            select(Review).where(Review.advertisement_id == ad_id)
-        )
-        reviews = list(review_result.scalars().all())
-    # session closed — no DB lock held from this point
-
-    optimizer = OptimizerService(db, user.company_id)
-    try:
-        suggestions = await optimizer.generate_suggestions(ad, analytics, reviews)
-    except Exception as exc:
-        logger.error("Optimizer generate_suggestions failed for ad %s: %s\n%s", ad_id, exc, traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Optimizer failed: {exc}")
-
-    # Log the suggestion (non-fatal — don't let a DB write kill the response)
-    try:
-        log = OptimizerLog(
-            advertisement_id=ad_id,
-            suggestions=suggestions["suggestions"],
-            context=suggestions.get("context"),
-        )
-        db.add(log)
-        await db.flush()
-    except Exception as exc:
-        logger.error("Failed to persist optimizer log for ad %s: %s", ad_id, exc)
+    )
+    log = result.scalar_one_or_none()
+    if not log:
+        raise HTTPException(status_code=404, detail="Optimizer log not found")
 
     return OptimizerSuggestion(
         advertisement_id=ad_id,
-        suggestions=suggestions["suggestions"],
-        context=suggestions.get("context"),
+        suggestions=log.suggestions or {},
+        context=log.context,
+        status=log.status,
     )
 
 
@@ -147,7 +191,7 @@ async def regenerate_optimizer_item(
         system=system_prompt,
         messages=[{"role": "user", "content": body.prompt}],
     )
-    text = response.content[0].text.strip()
+    text = response.content[0].text.strip() if response.content else ""
 
     for extractor in [
         lambda t: json.loads(t),
@@ -158,6 +202,8 @@ async def regenerate_optimizer_item(
     ]:
         try:
             result = extractor(text)
+            if not isinstance(result, dict):
+                continue
             # Ensure all three keys exist
             return {
                 "what":   result.get("what",   ""),

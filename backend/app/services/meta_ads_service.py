@@ -68,7 +68,9 @@ class MetaAdsService:
         )
         body = resp.json()
         if "error" in body:
-            raise RuntimeError(f"Code exchange failed: {body['error'].get('message')}")
+            err = body.get("error", {})
+            msg = err.get("message") if isinstance(err, dict) else str(err)
+            raise RuntimeError(f"Code exchange failed: {msg}")
         return body["access_token"]
 
     @staticmethod
@@ -90,8 +92,10 @@ class MetaAdsService:
         )
         body = resp.json()
         if "error" in body:
-            raise RuntimeError(f"Long-lived token exchange failed: {body['error'].get('message')}")
-        return body["access_token"], int(body.get("expires_in", 5183944))  # default ~60 days
+            err = body.get("error", {})
+            msg = err.get("message") if isinstance(err, dict) else str(err)
+            raise RuntimeError(f"Long-lived token exchange failed: {msg}")
+        return body["access_token"], int(body.get("expires_in") or 5183944)  # default ~60 days
 
     @staticmethod
     def fetch_me(access_token: str) -> dict:
@@ -153,7 +157,9 @@ class MetaAdsService:
         )
         biz_body = biz_resp.json()
         for biz in biz_body.get("data", []):
-            for p in (biz.get("owned_pages") or {}).get("data", []):
+            op = biz.get("owned_pages")
+            pages_data = op.get("data", []) if isinstance(op, dict) else []
+            for p in pages_data:
                 pages.setdefault(p["id"], p)
 
         return list(pages.values())
@@ -225,7 +231,9 @@ class MetaAdsService:
             {"bytes": image_b64},
         )
         # Response: {"images": {"<filename>": {"hash": "...", ...}}}
-        for _fname, img_data in result.get("images", {}).items():
+        imgs = result.get("images") or {}
+        images_dict = imgs if isinstance(imgs, dict) else {}
+        for _fname, img_data in images_dict.items():
             return img_data["hash"]
         raise RuntimeError("Meta did not return an image hash")
 
@@ -301,7 +309,8 @@ class MetaAdsService:
                 page_id,
                 params={"fields": "instagram_accounts{id}"},
             )
-            accounts = (body.get("instagram_accounts") or {}).get("data", [])
+            ig = body.get("instagram_accounts")
+            accounts = ig.get("data", []) if isinstance(ig, dict) else []
             if accounts:
                 return accounts[0]["id"]
         except Exception as exc:

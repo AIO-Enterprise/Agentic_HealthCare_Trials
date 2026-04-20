@@ -715,12 +715,12 @@ async def _bg_generate_strategy(ad_id: str, company_id: str) -> None:
             flag_modified(ad, "questionnaire")
 
             # Auto voice recommendation for voicebot campaigns
-            if "voicebot" in (ad.ad_type or []):
+            if "voicebot" in (ad.ad_type if isinstance(ad.ad_type, list) else []):
                 await db.flush()
                 try:
                     vb_svc = VoicebotAgentService(db)
                     rec = await vb_svc.recommend_voice(ad_id)
-                    cfg = dict(ad.bot_config or {})
+                    cfg = dict(ad.bot_config if isinstance(ad.bot_config, dict) else {})
                     cfg.setdefault("voice_id",           rec["voice_id"])
                     cfg.setdefault("conversation_style", rec["conversation_style"])
                     cfg.setdefault("first_message",      rec["first_message"])
@@ -1005,9 +1005,9 @@ async def distribute_to_meta(
 
     cfg = body.get("config") or {}
 
-    destination_url    = cfg.get("destination_url", "").strip()
-    daily_budget_str   = str(cfg.get("daily_budget", "10")).strip()
-    countries_str      = cfg.get("targeting_countries", "US").strip()
+    destination_url    = (cfg.get("destination_url") or "").strip()
+    daily_budget_str   = str(cfg.get("daily_budget") or "10").strip()
+    countries_str      = (cfg.get("targeting_countries") or "US").strip()
     selected_creatives = cfg.get("selected_creatives") or []
     display_url        = (cfg.get("display_url")  or "").strip() or None
     addon_type         = (cfg.get("addon_type")   or "").strip() or None
@@ -1025,9 +1025,9 @@ async def distribute_to_meta(
     conn = conn_result.scalar_one_or_none()
 
     # Allow manual override in config for backwards-compatibility / testing
-    access_token  = cfg.get("access_token",  "").strip() or (conn.access_token  if conn else "")
-    ad_account_id = cfg.get("ad_account_id", "").strip() or (conn.ad_account_id if conn else "")
-    page_id       = cfg.get("page_id",       "").strip() or (conn.page_id       if conn else "")
+    access_token  = (cfg.get("access_token")  or "").strip() or (conn.access_token  if conn else "")
+    ad_account_id = (cfg.get("ad_account_id") or "").strip() or (conn.ad_account_id if conn else "")
+    page_id       = (cfg.get("page_id")       or "").strip() or (conn.page_id       if conn else "")
 
     # ── Validate required fields ──────────────────────────────────────────────
     missing = [
@@ -1077,7 +1077,8 @@ async def distribute_to_meta(
     # For "phone" add-on, use the voicebot number stored during agent provisioning.
     # No manual number entry required — the CTA always points at the voice agent.
     if addon_type == "phone" and not addon_phone:
-        addon_phone = (ad.bot_config or {}).get("voice_phone_number") or None
+        bc = ad.bot_config if isinstance(ad.bot_config, dict) else {}
+        addon_phone = bc.get("voice_phone_number") or None
         if not addon_phone:
             raise HTTPException(
                 status_code=422,
@@ -1113,7 +1114,7 @@ async def distribute_to_meta(
 
     # ── Persist the Ads Manager URL on the ad ────────────────────────────────
     from sqlalchemy.orm.attributes import flag_modified
-    existing_meta = ad.bot_config or {}
+    existing_meta = dict(ad.bot_config if isinstance(ad.bot_config, dict) else {})
     existing_meta["meta_campaign_id"] = meta_result["campaign_id"]
     existing_meta["meta_adset_id"]    = meta_result["adset_id"]
     existing_meta["meta_ad_ids"]      = meta_result["ad_ids"]
@@ -1177,7 +1178,7 @@ def _get_meta_conn_and_ids(ad, conn):
     Extract Meta campaign_id, ad_ids, access_token, ad_account_id, page_id from an ad.
     Raises HTTPException if anything required is missing.
     """
-    bot = ad.bot_config or {}
+    bot = ad.bot_config if isinstance(ad.bot_config, dict) else {}
     campaign_id = bot.get("meta_campaign_id")
     ad_ids = bot.get("meta_ad_ids", [])
 
@@ -1240,9 +1241,10 @@ async def list_meta_ads(
     finally:
         await svc.close()
 
+    bc_list = ad.bot_config if isinstance(ad.bot_config, dict) else {}
     return {
         "campaign_id": campaign_id,
-        "adset_id": (ad.bot_config or {}).get("meta_adset_id"),
+        "adset_id": bc_list.get("meta_adset_id"),
         "ads": ads,
     }
 
@@ -1289,7 +1291,7 @@ async def update_meta_ad(
     conn = conn_result.scalar_one_or_none()
     _, _, access_token, ad_account_id, page_id_default = _get_meta_conn_and_ids(ad, conn)
 
-    bot        = ad.bot_config or {}
+    bot        = ad.bot_config if isinstance(ad.bot_config, dict) else {}
     adset_id   = bot.get("meta_adset_id")
     campaign_id_stored = bot.get("meta_campaign_id")
 
@@ -1383,7 +1385,8 @@ async def update_meta_budget(
     conn = conn_result.scalar_one_or_none()
     _, _, access_token, ad_account_id, _ = _get_meta_conn_and_ids(ad, conn)
 
-    adset_id = (ad.bot_config or {}).get("meta_adset_id")
+    bc_budget = ad.bot_config if isinstance(ad.bot_config, dict) else {}
+    adset_id = bc_budget.get("meta_adset_id")
     if not adset_id:
         raise HTTPException(status_code=400, detail="No Meta ad set found for this campaign. Upload to Meta first.")
 
@@ -1446,7 +1449,7 @@ async def delete_meta_ad(
         await svc.close()
 
     # Remove from stored ad_ids list
-    bot = dict(ad.bot_config or {})
+    bot = dict(ad.bot_config if isinstance(ad.bot_config, dict) else {})
     existing_ids = bot.get("meta_ad_ids", [])
     bot["meta_ad_ids"] = [i for i in existing_ids if i != meta_ad_id]
     ad.bot_config = bot
@@ -1512,10 +1515,11 @@ async def get_meta_insights(
         cpc         = float(row.get("cpc", 0) or 0)
         # Count link click actions as conversions
         actions = row.get("actions") or []
+        actions = actions if isinstance(actions, list) else []
         conversions = sum(
             int(a.get("value", 0) or 0)
             for a in actions
-            if a.get("action_type") in ("offsite_conversion.fb_pixel_lead", "link_click")
+            if isinstance(a, dict) and a.get("action_type") in ("offsite_conversion.fb_pixel_lead", "link_click")
         )
         click_rate = round(clicks / impressions * 100, 4) if impressions else 0.0
 
@@ -1601,9 +1605,9 @@ async def get_schedule_suggestions(
     )
     analytics = analytics_result.scalars().all()
 
-    strategy = ad.strategy_json or {}
+    strategy = ad.strategy_json if isinstance(ad.strategy_json, dict) else {}
     kpis     = strategy.get("kpis", [])
-    audience = ad.target_audience or {}
+    audience = ad.target_audience if isinstance(ad.target_audience, dict) else {}
     recent_perf = [
         {
             "date": a.date_label,
@@ -1881,7 +1885,7 @@ async def minor_edit_strategy(
         raise HTTPException(status_code=400, detail="No strategy to edit")
 
     # Apply the dot-path patch
-    strategy = dict(ad.strategy_json)
+    strategy = dict(ad.strategy_json if isinstance(ad.strategy_json, dict) else {})
     keys = body.field.split(".")
     node = strategy
     for key in keys[:-1]:
@@ -2022,7 +2026,7 @@ async def delete_advertisement(
     # ── 1. Delete ElevenLabs voice agent (best-effort) ────────────────────────
     # TODO: verify ElevenLabs agent deletion is confirmed end-to-end in staging
     # REVIEW: should a failed agent deletion block the overall delete or stay non-fatal?
-    bot_config = ad.bot_config or {}
+    bot_config = ad.bot_config if isinstance(ad.bot_config, dict) else {}
     if bot_config.get("elevenlabs_agent_id"):
         try:
             svc = VoicebotAgentService(db)
@@ -2081,7 +2085,7 @@ async def update_bot_config(
     if not ad:
         raise HTTPException(status_code=404, detail="Advertisement not found")
 
-    merged = dict(ad.bot_config or {})
+    merged = dict(ad.bot_config if isinstance(ad.bot_config, dict) else {})
     merged.update(body.model_dump(exclude_unset=True))
     ad.bot_config = merged
     flag_modified(ad, "bot_config")
@@ -2307,8 +2311,9 @@ async def approve_optimizer_changes(
 
     deployed = []
     for review in pending:
-        action = (review.suggestions or {}).get("action")
-        field  = (review.suggestions or {}).get("field")
+        sugg_approve = review.suggestions if isinstance(review.suggestions, dict) else {}
+        action = sugg_approve.get("action")
+        field  = sugg_approve.get("field")
 
         if action == "regenerate_website":
             # Re-host the already-generated website HTML
@@ -2326,7 +2331,7 @@ async def approve_optimizer_changes(
 
         elif action == "regenerate_creative":
             # Re-upload creatives to Meta for each existing Meta ad
-            bot = ad.bot_config or {}
+            bot = ad.bot_config if isinstance(ad.bot_config, dict) else {}
             campaign_id = bot.get("meta_campaign_id")
             if campaign_id and ad.output_files:
                 from app.models.models import PlatformConnection
@@ -2392,10 +2397,10 @@ async def reject_optimizer_changes(
     if not pending:
         raise HTTPException(status_code=404, detail="No pending optimizer changes found")
 
-    strategy = dict(ad.strategy_json or {})
+    strategy = dict(ad.strategy_json if isinstance(ad.strategy_json, dict) else {})
     modified = False
     for review in pending:
-        sugg = review.suggestions or {}
+        sugg = review.suggestions if isinstance(review.suggestions, dict) else {}
         field     = sugg.get("field")
         old_value = sugg.get("old_value")
         if field and old_value is not None:

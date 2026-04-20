@@ -120,7 +120,7 @@ class ReinforcementService:
             "advertisement": {
                 "id": ad_id,
                 "title": ad.title if ad else "Unknown",
-                "type": ", ".join(ad.ad_type) if ad else "Unknown",
+                "type": ", ".join(ad.ad_type if isinstance(ad.ad_type, list) else []) if ad else "Unknown",
                 "strategy": ad.strategy_json if ad else None,
             },
             "optimizer_suggestions": opt_log.suggestions,
@@ -227,11 +227,13 @@ Produce a structured reference document covering:
                 skill.version += 1
 
     def _mock_formalized(self, raw: Dict) -> str:
-        ad_title = raw.get("advertisement", {}).get("title", "Unknown Campaign")
+        adv = raw.get("advertisement") or {}
+        adv = adv if isinstance(adv, dict) else {}
+        ad_title = adv.get("title", "Unknown Campaign")
         return f"""## Reference Document — {ad_title}
 
 ### Campaign Summary
-Campaign type: {raw.get('advertisement', {}).get('type', 'N/A')}.
+Campaign type: {adv.get('type', 'N/A')}.
 Human decision on optimizer suggestions: {raw.get('human_decision', 'N/A')}.
 
 ### What Worked

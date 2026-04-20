@@ -3606,7 +3606,14 @@ function PublisherAnalytics({ ads, suggestions, setSuggestions, optimizing, setO
     if (!activeAd) return;
     setOptimizing(true);
     try {
-      const result = await analyticsAPI.triggerOptimize(activeAd.id);
+      const { log_id } = await analyticsAPI.triggerOptimize(activeAd.id);
+      let result;
+      for (let i = 0; i < 60; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        result = await analyticsAPI.getOptimizeStatus(activeAd.id, log_id);
+        if (result.status === "done" || result.status === "failed") break;
+      }
+      if (result?.status === "failed") throw new Error("Optimizer failed — please try again.");
       setSuggestions(result);
     } catch (err) { alert(err.message); }
     finally { setOptimizing(false); }

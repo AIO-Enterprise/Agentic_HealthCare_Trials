@@ -26,6 +26,21 @@ from app.core.bedrock import get_async_client, get_model, is_configured
 logger = logging.getLogger(__name__)
 
 
+def _f(v) -> float:
+    """Safe float conversion — returns 0.0 for None, non-numeric strings, etc."""
+    try:
+        return float(v) if v is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _to_str(v, default: str = "") -> str:
+    """Safe string conversion — serialises dicts/lists, returns default for None."""
+    if v is None:
+        return default
+    return str(v)
+
+
 class OptimizerService:
     def __init__(self, db: AsyncSession, company_id: str):
         self.db = db
@@ -110,11 +125,10 @@ class OptimizerService:
             key=lambda a: str(getattr(a, "date_label", "") or getattr(a, "recorded_at", "") or ""),
         )
 
-        spends           = [float(getattr(a, "spend",       0) or 0) for a in rows]
-        # click_rate is stored as a percentage (e.g. 0.27 for 0.27%) — no raw clicks column
-        click_rates_pct  = [float(getattr(a, "click_rate",  0) or 0) for a in rows]
-        impressions      = [float(getattr(a, "impressions", 0) or 0) for a in rows]
-        cpms             = [float(getattr(a, "cpm",         0) or 0) for a in rows]
+        spends           = [_f(getattr(a, "spend",       None)) for a in rows]
+        click_rates_pct  = [_f(getattr(a, "click_rate",  None)) for a in rows]
+        impressions      = [_f(getattr(a, "impressions", None)) for a in rows]
+        cpms             = [_f(getattr(a, "cpm",         None)) for a in rows]
         date_labels      = [getattr(a, "date_label", None)            for a in rows]
 
         # ctrs as ratio (0-1) for trend analysis; click_rates_pct already in % form
@@ -203,7 +217,8 @@ class OptimizerService:
         Compute engagement level vs industry benchmark and identify the primary
         creative weakness. Used to guide deterministic content optimization prompts.
         """
-        is_website = "website" in (ad.ad_type or [])
+        ad_type_list = ad.ad_type if isinstance(ad.ad_type, list) else []
+        is_website = "website" in ad_type_list
 
         if not analytics:
             engagement_level = "unknown"
@@ -211,7 +226,7 @@ class OptimizerService:
             primary_weakness = "insufficient data — optimise creative proactively"
         else:
             # click_rate is stored as percentage (e.g. 0.27 for 0.27%) — average across rows
-            click_rates_pct = [float(getattr(a, "click_rate", 0) or 0) for a in analytics]
+            click_rates_pct = [_f(getattr(a, "click_rate", None)) for a in analytics]
             ctr = (sum(click_rates_pct) / len(click_rates_pct) / 100.0) if click_rates_pct else 0.0
 
             # Industry benchmarks for awareness/traffic ads
@@ -237,21 +252,24 @@ class OptimizerService:
             s = ad.strategy_json
             current_creative = {
                 "title":    ad.title,
-                "caption":  s.get("caption") or s.get("body") or "",
-                "hashtags": s.get("hashtags", []),
-                "cta":      s.get("cta", ""),
-                "colors":   s.get("brand_colors", []),
-                "font":     s.get("font_style", ""),
-                "audience": s.get("target_audience", ""),
-                "goal":     s.get("goal", ""),
+                "caption":  _to_str(s.get("caption") or s.get("body"), ""),
+                "hashtags": s.get("hashtags", []) if isinstance(s.get("hashtags"), list) else [],
+                "cta":      _to_str(s.get("cta"), "Learn More"),
+                "colors":   s.get("brand_colors", []) if isinstance(s.get("brand_colors"), list) else [],
+                "font":     _to_str(s.get("font_style"), ""),
+                "audience": _to_str(s.get("target_audience"), ""),
+                "goal":     _to_str(s.get("goal"), ""),
             }
 
-        # Website and creative asset context
+        # Website and creative asset context — guard all JSON fields against malformed DB data
+        _wr = ad.website_reqs if isinstance(ad.website_reqs, dict) else {}
+        _ad = ad.ad_details   if isinstance(ad.ad_details,   dict) else {}
+        _of = ad.output_files if isinstance(ad.output_files, list) else []
         website_context = {
             "hosted_url":   ad.hosted_url or None,
-            "website_reqs": ad.website_reqs or {},   # design spec / requirements
-            "ad_details":   ad.ad_details or {},     # ad creative specifics
-            "output_files": ad.output_files or [],   # generated/uploaded asset references
+            "website_reqs": _wr,
+            "ad_details":   _ad,
+            "output_files": _of,
         }
 
         return {
@@ -346,6 +364,14 @@ class OptimizerService:
         output_files  = wc.get("output_files") or []
         hosted_url    = wc.get("hosted_url") or "not deployed yet"
 
+        # Guard: website_reqs must be a dict (could be a list if DB JSON is malformed)
+        if not isinstance(website_reqs, dict):
+            website_reqs = {}
+        if not isinstance(ad_details, dict):
+            ad_details = {}
+        if not isinstance(output_files, list):
+            output_files = []
+
         website_ctx = (
             f"Hosted URL: {hosted_url} | "
             f"Website requirements: {str(website_reqs)[:300]} | "
@@ -354,9 +380,14 @@ class OptimizerService:
             f"Color spec: {website_reqs.get('colors') or cc.get('colors') or 'not set'}"
         )
 
+        def _file_label(f) -> str:
+            if isinstance(f, dict):
+                return str(f.get('name') or f.get('url') or f.get('filename') or str(f))
+            return str(f)
+
         ad_creative_ctx = (
             f"Ad details: {str(ad_details)[:300]} | "
-            f"Output files: {[f.get('name') or f.get('url') or str(f) for f in output_files[:5]]}"
+            f"Output files: {[_file_label(f) for f in output_files[:5]]}"
         )
 
         reviewer_notes = (
@@ -520,29 +551,29 @@ Rules:
         cs = content_signals
         cc = cs.get("current_creative", {})
 
-        budget_signal    = ca.get("budget_signal",    "rebalance")
-        ctr_trend        = ca.get("ctr_trend",        "stable")
-        spend_trend      = ca.get("spend_trend",      "stable")
-        budget_rationale = ca.get("budget_rationale", "No analytics data yet.")
-        avg_cpm          = ca.get("avg_cpm",          0)
-        avg_ctr          = ca.get("avg_ctr_pct",      0)
-        total_spend      = ca.get("total_spend",      0)
-        data_points      = ca.get("data_points",      0)
-        top_w            = ca.get("top_traffic_windows", [])
-        low_w            = ca.get("low_traffic_windows", [])
+        budget_signal    = _to_str(ca.get("budget_signal"),    "rebalance")
+        ctr_trend        = _to_str(ca.get("ctr_trend"),        "stable")
+        spend_trend      = _to_str(ca.get("spend_trend"),      "stable")
+        budget_rationale = _to_str(ca.get("budget_rationale"), "No analytics data yet.")
+        avg_cpm          = _f(ca.get("avg_cpm",    0))
+        avg_ctr          = _f(ca.get("avg_ctr_pct", 0))
+        total_spend      = _f(ca.get("total_spend", 0))
+        data_points      = int(ca.get("data_points", 0) or 0)
+        top_w            = ca.get("top_traffic_windows", []) if isinstance(ca.get("top_traffic_windows"), list) else []
+        low_w            = ca.get("low_traffic_windows", []) if isinstance(ca.get("low_traffic_windows"), list) else []
 
         engagement    = cs.get("engagement_level", "unknown")
         weakness      = cs.get("primary_weakness", "creative quality")
         ctr_benchmark = cs.get("ctr_benchmark",   "N/A")
 
-        title    = cc.get("title",    "this campaign")
-        caption  = cc.get("caption",  "")
-        hashtags = cc.get("hashtags", [])
-        cta      = cc.get("cta",      "Learn More")
-        colors   = cc.get("colors",   [])
-        font     = cc.get("font",     "not specified")
-        audience = cc.get("audience", "general audience")
-        goal     = cc.get("goal",     "healthcare trial")
+        title    = _to_str(cc.get("title"),    "this campaign")
+        caption  = _to_str(cc.get("caption"),  "")
+        hashtags = cc.get("hashtags", []) if isinstance(cc.get("hashtags"), list) else []
+        cta      = _to_str(cc.get("cta"),      "Learn More")
+        colors   = cc.get("colors",   []) if isinstance(cc.get("colors"), list) else []
+        font     = _to_str(cc.get("font"),     "not specified")
+        audience = _to_str(cc.get("audience"), "general audience")
+        goal     = _to_str(cc.get("goal"),     "healthcare trial")
 
         # ── Cost items ────────────────────────────────────────────────────────
         action_verb = "Reduce and redistribute" if budget_signal == "reduce_and_redistribute" else (
@@ -568,14 +599,16 @@ Rules:
         # schedule_pause — resolve day-of-week from lowest-CTR date, set concrete hours
         _DAY_NAMES = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
         if low_w:
-            lw = low_w[0]
+            lw = low_w[0] if isinstance(low_w[0], dict) else {}
             try:
                 from datetime import date as _dt
-                _d     = _dt.fromisoformat(lw["date"])
-                dow    = _DAY_NAMES[_d.weekday()]
+                _d  = _dt.fromisoformat(str(lw.get("date", "")))
+                dow = _DAY_NAMES[_d.weekday()]
             except Exception:
                 dow = "Sunday"
-            lw_ctr_pct = round(lw["ctr"] * 100, 3)
+            lw_ctr     = _f(lw.get("ctr", 0))
+            lw_spend   = _f(lw.get("spend", 0))
+            lw_ctr_pct = round(lw_ctr * 100, 3)
             pause_label = f"Every {dow}"
             pause_days  = [dow]
             pause_hours = "00:00-23:59"
@@ -584,7 +617,7 @@ Rules:
                 f"{dow}s show {lw_ctr_pct}% CTR vs {avg_ctr}% average"
             )
             pause_why   = (
-                f"{dow}s recorded only {lw_ctr_pct}% CTR on ${round(lw['spend'], 2)} spend "
+                f"{dow}s recorded only {lw_ctr_pct}% CTR on ${round(lw_spend, 2)} spend "
                 f"vs campaign avg {avg_ctr}% — every dollar spent on {dow}s returns "
                 f"less than {round(lw_ctr_pct / max(avg_ctr, 0.001), 1)}x the campaign average"
             )
@@ -699,8 +732,8 @@ Rules:
         ]
 
         # ── Assemble output ───────────────────────────────────────────────────
-        increase_days = [w["date"] for w in top_w]
-        reduce_days   = [w["date"] for w in low_w]
+        increase_days = [str(w.get("date", "")) for w in top_w if isinstance(w, dict)]
+        reduce_days   = [str(w.get("date", "")) for w in low_w if isinstance(w, dict)]
         realloc_pct   = "25–30%" if budget_signal != "rebalance" else "10–15%"
 
         return {

@@ -192,8 +192,11 @@ export const onboardingAPI = {
       body: formData,
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || `Document upload failed (HTTP ${res.status})`);
+      const raw = await res.text().catch(() => "");
+      let detail = "";
+      try { detail = (JSON.parse(raw) || {}).detail || ""; } catch { /* not JSON */ }
+      const snippet = raw && !detail ? ` — ${raw.slice(0, 200)}` : "";
+      throw new Error(detail || `Document upload failed (HTTP ${res.status}${snippet})`);
     }
     return res.json();
   },
@@ -278,8 +281,15 @@ export const documentsAPI = {
       body: formData,
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || `Document upload failed (HTTP ${res.status})`);
+      // Read the body once as text so we can surface whatever the edge (WAF,
+      // CloudFront, nginx) returned instead of silently showing a generic
+      // "HTTP 403". If the body is valid JSON with a `detail`, use that;
+      // otherwise fall back to the raw snippet or the HTTP status.
+      const raw = await res.text().catch(() => "");
+      let detail = "";
+      try { detail = (JSON.parse(raw) || {}).detail || ""; } catch { /* not JSON */ }
+      const snippet = raw && !detail ? ` — ${raw.slice(0, 200)}` : "";
+      throw new Error(detail || `Document upload failed (HTTP ${res.status}${snippet})`);
     }
     return res.json();
   },

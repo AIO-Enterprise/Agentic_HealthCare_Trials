@@ -103,21 +103,22 @@ async def trigger_optimization(
     Kick off async optimizer run. Returns immediately with {"log_id", "status": "pending"}.
     Poll GET /{ad_id}/optimize/status?log_id=<id> until status is "done" or "failed".
     """
-    ad_result = await db.execute(select(Advertisement).where(Advertisement.id == ad_id))
-    ad = ad_result.scalar_one_or_none()
-    if not ad:
-        raise HTTPException(status_code=404, detail="Advertisement not found")
+    async with async_session_factory() as db:
+        ad_result = await db.execute(select(Advertisement).where(Advertisement.id == ad_id))
+        ad = ad_result.scalar_one_or_none()
+        if not ad:
+            raise HTTPException(status_code=404, detail="Advertisement not found")
 
-    log = OptimizerLog(
-        advertisement_id=ad_id,
-        status="pending",
-        suggestions=None,
-        context=None,
-    )
-    db.add(log)
-    await db.flush()
-    log_id = log.id
-    await db.commit()
+        log = OptimizerLog(
+            advertisement_id=ad_id,
+            status="pending",
+            suggestions=None,
+            context=None,
+        )
+        db.add(log)
+        await db.flush()
+        log_id = log.id
+        await db.commit()
 
     background_tasks.add_task(_bg_run_optimizer, log_id, ad_id, user.company_id)
     return {"log_id": log_id, "status": "pending"}

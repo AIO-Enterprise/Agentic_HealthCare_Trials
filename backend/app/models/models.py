@@ -238,9 +238,10 @@ class Advertisement(Base):
     analytics          = relationship("AdAnalytics", back_populates="advertisement", cascade="all, delete-orphan")
     optimizer_logs     = relationship("OptimizerLog", back_populates="advertisement", cascade="all, delete-orphan")
     reinforcement_logs = relationship("ReinforcementLog", back_populates="advertisement")
-    voice_sessions     = relationship("VoiceSession", back_populates="advertisement", cascade="all, delete-orphan")
-    chat_sessions      = relationship("ChatSession", back_populates="advertisement", cascade="all, delete-orphan")
-    survey_responses   = relationship("SurveyResponse", back_populates="advertisement", cascade="all, delete-orphan")
+    voice_sessions      = relationship("VoiceSession", back_populates="advertisement", cascade="all, delete-orphan")
+    chat_sessions       = relationship("ChatSession", back_populates="advertisement", cascade="all, delete-orphan")
+    survey_responses    = relationship("SurveyResponse", back_populates="advertisement", cascade="all, delete-orphan")
+    booking_appointments = relationship("BookingAppointment", back_populates="advertisement", cascade="all, delete-orphan")
 
 
 # ─── Password Reset OTP ───────────────────────────────────────────────────────
@@ -364,6 +365,7 @@ class VoiceSession(Base):
     advertisement   = relationship("Advertisement", back_populates="voice_sessions")
     transcripts     = relationship("CallTranscript", back_populates="session", cascade="all, delete-orphan")
     survey_response = relationship("SurveyResponse", back_populates="voice_sessions", foreign_keys=[survey_response_id])
+    booking         = relationship("BookingAppointment", back_populates="voice_session", uselist=False)
 
 
 # ─── Platform Connections ─────────────────────────────────────────────────────
@@ -455,3 +457,35 @@ class SurveyResponse(Base):
 
     advertisement  = relationship("Advertisement", back_populates="survey_responses")
     voice_sessions = relationship("VoiceSession", back_populates="survey_response", foreign_keys="[VoiceSession.survey_response_id]")
+
+
+# ─── Booking Appointments ─────────────────────────────────────────────────────
+# Created mid-call by the voice agent via ElevenLabs webhook tool calling,
+# or post-call by the chatbot. Tracks who booked, when, and the call it came from.
+
+class BookingAppointment(Base):
+    __tablename__ = "booking_appointments"
+
+    id                         = Column(String, primary_key=True, default=_uuid)
+    advertisement_id           = Column(String, ForeignKey("advertisements.id"), nullable=False)
+    # Linked to the voice session that triggered the booking (null for chatbot bookings)
+    voice_session_id           = Column(String, ForeignKey("voice_sessions.id"), nullable=True)
+    elevenlabs_conversation_id = Column(String(256), nullable=True)  # raw EL conversation id
+
+    # Candidate details collected during the call
+    candidate_name             = Column(String(256), nullable=False)
+    candidate_phone            = Column(String(64),  nullable=True)
+    candidate_email            = Column(String(256), nullable=True)
+
+    # Preferred slot as told to the agent (stored as-is — coordinator confirms)
+    preferred_date             = Column(String(64),  nullable=True)  # "2026-05-10" or "next Monday"
+    preferred_time             = Column(String(64),  nullable=True)  # "10:00 AM" or "morning"
+    notes                      = Column(Text,        nullable=True)  # any extra context from the call
+
+    # Status lifecycle: pending → confirmed → completed | cancelled
+    status                     = Column(String(32),  default="pending", nullable=False)
+    created_at                 = Column(DateTime,    default=_now)
+    updated_at                 = Column(DateTime,    default=_now, onupdate=_now)
+
+    advertisement  = relationship("Advertisement", back_populates="booking_appointments")
+    voice_session  = relationship("VoiceSession",  back_populates="booking")

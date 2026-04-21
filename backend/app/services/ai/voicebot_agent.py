@@ -29,6 +29,68 @@ logger = logging.getLogger(__name__)
 
 ELEVENLABS_BASE = "https://api.elevenlabs.io"
 
+# ── Country → accent-matched voice catalogue ──────────────────────────────────
+# Each entry: voice_id, name, gender, accent, traits
+# Prefer voices that ElevenLabs rates as "conversational" or "friendly" for phone work.
+_ACCENT_VOICE_CATALOGUE: Dict[str, list] = {
+    # Australia / New Zealand
+    "australia": [
+        {"id": "XrExE9yKIg1WjnnlVkGX", "name": "Matilda", "gender": "female", "traits": "warm, bright Australian female — natural and friendly"},
+        {"id": "IKne3meq5aSn9XLyUdCD", "name": "Charlie", "gender": "male",   "traits": "casual, relaxed Australian male — approachable"},
+    ],
+    "new zealand": [
+        {"id": "XrExE9yKIg1WjnnlVkGX", "name": "Matilda", "gender": "female", "traits": "warm Australian/NZ female"},
+    ],
+    # United Kingdom / Ireland
+    "united kingdom": [
+        {"id": "onwK4e9ZLuTAKqWW03F9", "name": "Daniel",  "gender": "male",   "traits": "deep, authoritative British male — trustworthy"},
+        {"id": "Xb7hH8MSUJpSbSDYk0k2", "name": "Alice",   "gender": "female", "traits": "professional British female — calm and clear"},
+    ],
+    "ireland": [
+        {"id": "Xb7hH8MSUJpSbSDYk0k2", "name": "Alice",   "gender": "female", "traits": "warm British/Irish female"},
+    ],
+    # United States / Canada
+    "united states": [
+        {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Rachel",  "gender": "female", "traits": "calm, professional American female"},
+        {"id": "TxGEqnHWrfWFTfGW9XjX", "name": "Josh",    "gender": "male",   "traits": "conversational, relatable American male"},
+    ],
+    "canada": [
+        {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Rachel",  "gender": "female", "traits": "calm North American female"},
+    ],
+    # India
+    "india": [
+        {"id": "cgSgspJ2msm6clMCkdW9", "name": "Jessica", "gender": "female", "traits": "clear, warm South Asian female"},
+    ],
+    # Germany / Austria / Switzerland
+    "germany": [
+        {"id": "pNInz6obpgDQGcFmaJgB", "name": "Adam",    "gender": "male",   "traits": "deep, clear European male"},
+    ],
+    # France
+    "france": [
+        {"id": "MF3mGyEYCl7XYWbV9V6O", "name": "Elli",    "gender": "female", "traits": "bright, clear European female"},
+    ],
+    # Spain / Latin America
+    "spain": [
+        {"id": "AZnzlk1XvdvUeBnXmlld", "name": "Domi",    "gender": "female", "traits": "strong, confident Spanish female"},
+    ],
+    # Default fallback — used when country not matched
+    "_default": [
+        {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Rachel",  "gender": "female", "traits": "calm, professional, warm"},
+        {"id": "TxGEqnHWrfWFTfGW9XjX", "name": "Josh",    "gender": "male",   "traits": "conversational, relatable"},
+    ],
+}
+
+
+def _voice_for_country(country: str, prefer_gender: str = "female") -> Dict[str, str]:
+    """Return the best accent-matched voice for the given country string."""
+    key = (country or "").lower().strip()
+    candidates = _ACCENT_VOICE_CATALOGUE.get(key) or _ACCENT_VOICE_CATALOGUE["_default"]
+    # Prefer the requested gender, fall back to first available
+    for v in candidates:
+        if v.get("gender") == prefer_gender:
+            return v
+    return candidates[0]
+
 
 def _normalise_phone(phone: str) -> str:
     """Strip spaces/dashes/parens; keep leading +. Returns empty string if blank."""
@@ -60,7 +122,11 @@ class VoicebotAgentService:
         bot_config: Dict[str, Any] = ad.bot_config or {}
 
         system_prompt = await self._build_system_prompt(ad)
-        payload = self._build_agent_payload(bot_config, system_prompt)
+        payload = self._build_agent_payload(
+            bot_config, system_prompt,
+            trial_location=ad.trial_location,
+            advertisement_id=advertisement_id,
+        )
 
         existing_agent_id = bot_config.get("elevenlabs_agent_id")
 
@@ -621,23 +687,70 @@ Respond with ONLY a valid JSON object, no markdown:
     # ──────────────────────────────────────────────────────────────────────────
 
     def _build_agent_payload(
-        self, bot_config: Dict[str, Any], system_prompt: str
+        self,
+        bot_config: Dict[str, Any],
+        system_prompt: str,
+        trial_location: Optional[list] = None,
+        advertisement_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Map bot_config fields → ElevenLabs agent creation payload.
 
         bot_config keys consumed:
-          voice_id           - ElevenLabs voice ID (falls back to settings default)
+          voice_id           - ElevenLabs voice ID (overrides accent auto-select)
           first_message      - Agent's opening line
           language           - BCP-47 language code, e.g. "en", "en-US"
           bot_name           - Display name for the agent
+
+        If voice_id is not set, the voice is auto-selected from the country in
+        trial_location[0] so the accent matches the campaign's target region.
         """
-        voice_id = bot_config.get("voice_id") or settings.ELEVENLABS_VOICE_ID or "EXAVITQu4vr4xnSDxMaL"
+        # Auto-select accent-matched voice from trial_location if no explicit voice_id
+        explicit_voice = bot_config.get("voice_id") or settings.ELEVENLABS_VOICE_ID
+        if explicit_voice:
+            voice_id = explicit_voice
+        else:
+            country = ""
+            if trial_location and isinstance(trial_location, list) and len(trial_location) > 0:
+                loc = trial_location[0]
+                country = (loc.get("country") or "") if isinstance(loc, dict) else ""
+            voice_id = _voice_for_country(country)["id"]
+            logger.info("Auto-selected accent voice for country=%r → voice_id=%s", country, voice_id)
+
         first_message = bot_config.get(
             "first_message", "Hello! How can I help you today?"
         )
         language = bot_config.get("language", "en")
         agent_name = bot_config.get("bot_name", "Marketing Assistant")
+
+        # Booking webhook tool — ElevenLabs calls this mid-call when the agent
+        # decides to book a screening appointment for an eligible candidate.
+        public_url = (settings.APP_PUBLIC_URL or "").rstrip("/")
+        booking_tool = {
+            "type": "webhook",
+            "name": "book_appointment",
+            "description": (
+                "Book a screening appointment for a candidate who has passed eligibility "
+                "screening and agreed to attend. Call this ONLY after the candidate confirms "
+                "they want to proceed and has provided their preferred date and time."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "candidate_name":  {"type": "string", "description": "Full name of the candidate"},
+                    "preferred_date":  {"type": "string", "description": "Preferred appointment date, e.g. '2026-05-10' or 'next Monday'"},
+                    "preferred_time":  {"type": "string", "description": "Preferred time slot, e.g. '10:00 AM' or 'morning'"},
+                    "candidate_phone": {"type": "string", "description": "Candidate's phone number"},
+                    "candidate_email": {"type": "string", "description": "Candidate's email address if provided"},
+                    "notes":           {"type": "string", "description": "Any extra context from the conversation"},
+                },
+                "required": ["candidate_name", "preferred_date", "preferred_time"],
+            },
+            "url": f"{public_url}/api/voice-agent/{{}}/book-slot",   # EL fills ad_id at runtime via path
+            "method": "POST",
+        }
+        # Embed the ad_id directly in the URL — one webhook URL per provisioned agent
+        booking_tool["url"] = f"{public_url}/api/voice-agent/{advertisement_id or ''}/book-slot"
 
         payload: Dict[str, Any] = {
             "name": agent_name,
@@ -647,13 +760,15 @@ Respond with ONLY a valid JSON object, no markdown:
                         "prompt": system_prompt,
                         "llm": "claude-3-7-sonnet",
                         "temperature": 0.7,
+                        "tools": [booking_tool] if public_url else [],
                     },
                     "first_message": first_message,
                     "language": language,
                 },
                 "tts": {
                     "voice_id": voice_id,
-                    "model_id": "eleven_turbo_v2",
+                    "model_id": settings.ELEVENLABS_TTS_MODEL,
+                    "optimize_streaming_latency": 3,
                 },
             },
         }
@@ -844,16 +959,97 @@ Respond with ONLY a valid JSON object, no markdown:
         # 7. Conversation style
         sections.append(f"## Conversation Style\nSpeak in a {style} manner throughout the call.")
 
-        # 8. Voice rules (always last)
+        # 8. Booking flow instructions
+        public_url = (settings.APP_PUBLIC_URL or "").rstrip("/")
+        if public_url:
+            sections.append(
+                "## Booking Flow (follow this sequence exactly after eligibility is confirmed)\n"
+                "Once you have determined the caller is eligible AND they express willingness to proceed:\n"
+                "\n"
+                "Step 1 — Warmly confirm eligibility:\n"
+                "  \"That's great news! <break time=\"0.4s\" /> Based on what you've told me, "
+                "you sound like a wonderful fit for this study.\"\n"
+                "\n"
+                "Step 2 — Offer to book on the spot:\n"
+                "  \"I can actually lock in a screening appointment for you right now — "
+                "it only takes a moment. <break time=\"0.5s\" /> Would that work for you?\"\n"
+                "\n"
+                "Step 3 — Collect booking details conversationally (one question at a time):\n"
+                "  a) Full name (\"Could I grab your full name for the booking?\")\n"
+                "  b) Preferred date (\"What date works best for you?\")\n"
+                "  c) Preferred time (\"And is there a time of day that suits — morning, afternoon, or a specific time?\")\n"
+                "  d) Phone number (\"What's the best number to reach you on?\") — skip if already known from outbound call\n"
+                "  e) Email (\"And do you have an email address we can send the confirmation to?\" — optional, don't push)\n"
+                "\n"
+                "Step 4 — Call the book_appointment tool with all collected details.\n"
+                "  Wait for the confirmation response, then read it naturally to the caller.\n"
+                "\n"
+                "Step 5 — Close warmly:\n"
+                "  \"You're all set! <break time=\"0.3s\" /> The team will be in touch very soon "
+                "to confirm everything. <break time=\"0.4s\" /> Is there anything else I can help you with today?\"\n"
+                "\n"
+                "RULES:\n"
+                "- Never call book_appointment before the caller explicitly agrees to book.\n"
+                "- Never fabricate a date or time — only use what the caller provides.\n"
+                "- If the caller is not eligible, do NOT offer booking. Thank them sincerely and "
+                "let them know other studies may be a better fit."
+            )
+
+        # 8. Voice rules + ElevenLabs audio tags (always last)
+        # Build country-aware accent instruction
+        locations = ad.trial_location or []
+        country = ""
+        if locations and isinstance(locations[0], dict):
+            country = locations[0].get("country", "")
+        accent_note = (
+            f"You have a natural {country} accent — speak exactly as a local would, "
+            f"with the rhythm, intonation, and warmth typical of {country}. "
+            "Never sound robotic or overly formal."
+        ) if country else (
+            "Speak with a warm, natural, conversational tone."
+        )
+
         sections.append(
             "## Critical Voice Rules\n"
             "You are speaking out loud via a phone call — not typing.\n"
+            f"{accent_note}\n"
             "- Keep every turn to 1–2 short sentences. Never exceed 3.\n"
             "- Never use bullet points, numbered lists, markdown, or headers.\n"
             "- Never spell out punctuation (no 'dash', 'colon', 'asterisk').\n"
-            "- Speak naturally — contractions, pauses, filler affirmations ('Sure!', 'Got it.') are fine.\n"
+            "- Speak naturally — contractions, filler affirmations are encouraged.\n"
             "- If asked something you don't know, say so honestly and offer to have a human follow up.\n"
-            "- Never fabricate trial data, timelines, or medical claims."
+            "- Never fabricate trial data, timelines, or medical claims.\n"
+            "\n"
+            "## Human Expression & Audio Tags (REQUIRED — use in every response)\n"
+            "Embed these ElevenLabs audio tags to sound genuinely human. Rules:\n"
+            "\n"
+            "PAUSES:\n"
+            "- <break time=\"0.2s\" /> — brief pause between two related clauses.\n"
+            "- <break time=\"0.4s\" /> — natural breath after a greeting or before shifting topic.\n"
+            "- <break time=\"0.6s\" /> — before asking a question, giving the caller space to prepare.\n"
+            "- <break time=\"1.0s\" /> — after delivering important info (dates, eligibility result, next steps).\n"
+            "\n"
+            "HUMAN WARMTH SOUNDS (use sparingly — 1–2 per call, only when genuinely fitting):\n"
+            "- [laughs] — light, genuine laughter when something is lightly amusing.\n"
+            "- [chuckles] — a soft chuckle when the caller says something endearing or funny.\n"
+            "- [giggles] — only if the moment is very light-hearted and the caller is clearly relaxed.\n"
+            "- \"Mm!\" or \"Oh!\" — natural verbal reactions showing you're listening.\n"
+            "\n"
+            "EMPHASIS:\n"
+            "- <emphasis level=\"moderate\"> ... </emphasis> — stress a key word (trial name, key benefit).\n"
+            "- <emphasis level=\"strong\"> ... </emphasis> — rare; only for the single most important word.\n"
+            "\n"
+            "RULES:\n"
+            "- Never stack more than 2 breaks in a row.\n"
+            "- Never use [laughs] or [giggles] when discussing medical conditions, eligibility failure, or serious topics.\n"
+            "- Never use <break> mid-word or inside a proper noun.\n"
+            "- Every response must contain at least one <break> tag.\n"
+            "\n"
+            "EXAMPLE (Australian campaign):\n"
+            "\"G'day! <break time=\"0.3s\" /> Thanks so much for calling about the "
+            "<emphasis level=\"moderate\">Sleep Trials</emphasis> study. <break time=\"0.4s\" /> "
+            "It's a pretty exciting one — eight weeks, no medication, completely free. <break time=\"0.6s\" /> "
+            "Mind if I ask you a couple of quick questions to see if it's a good fit for you?\""
         )
 
         return "\n\n".join(sections)

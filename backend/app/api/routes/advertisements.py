@@ -2456,14 +2456,19 @@ async def approve_optimizer_changes(
         elif field:
             new_val = sugg_approve.get("new_value")
             if new_val is not None:
-                # Write the new value back into ad_details so it persists.
-                # ad_details is a mutable JSON column — reassign to trigger dirty tracking.
-                details = dict(ad.ad_details or {})
-                details[field] = new_val
-                ad.ad_details = details
+                # The field was already written to strategy_json by /minor-edit when
+                # the Publisher applied the suggestion. Re-write here to ensure it
+                # persists even if the Review was created by a path that skipped it.
+                strategy = dict(ad.strategy_json if isinstance(ad.strategy_json, dict) else {})
+                keys = field.split(".")
+                node = strategy
+                for key in keys[:-1]:
+                    node = node.setdefault(key, {})
+                node[keys[-1]] = new_val
+                ad.strategy_json = strategy
                 from sqlalchemy.orm.attributes import flag_modified
-                flag_modified(ad, "ad_details")
-                deployed.append(f"field '{field}' updated")
+                flag_modified(ad, "strategy_json")
+                deployed.append(f"field '{field}' confirmed in strategy")
             else:
                 deployed.append(f"field '{field}' — no new_value in suggestion")
 

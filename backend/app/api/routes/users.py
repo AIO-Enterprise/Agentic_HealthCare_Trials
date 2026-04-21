@@ -14,10 +14,25 @@ from typing import List
 
 from app.db.database import get_db
 from app.models.models import User, UserRole
-from app.schemas.schemas import UserCreate, UserOut
+from app.schemas.schemas import UserCreate, UserOut, UserUpdateSelf
 from app.core.security import hash_password, require_roles
 
 router = APIRouter(prefix="/users", tags=["User Management"])
+
+
+@router.patch("/me", response_model=UserOut)
+async def update_self(
+    body: UserUpdateSelf,
+    current_user: User = Depends(require_roles([
+        UserRole.STUDY_COORDINATOR, UserRole.PROJECT_MANAGER,
+        UserRole.ETHICS_MANAGER, UserRole.PUBLISHER,
+    ])),
+    db: AsyncSession = Depends(get_db),
+):
+    """Allow the authenticated user to update their own display name."""
+    current_user.full_name = body.full_name.strip()
+    await db.flush()
+    return current_user
 
 
 @router.post("/", response_model=UserOut)

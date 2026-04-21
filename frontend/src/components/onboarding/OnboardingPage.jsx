@@ -200,16 +200,23 @@ export default function OnboardingPage() {
       if (!companyId) {
         const hasBrandData = brand.primaryColor || brand.accentColor || brandPdfFile || selectedPreset;
         if (hasBrandData) {
+          // Upload the PDF first if one was provided, then persist its path
+          let pdfPath = null;
+          if (brandPdfFile) {
+            const uploadRes = await brandKitAPI.uploadPdf(brandPdfFile);
+            pdfPath = uploadRes.pdf_path;
+          }
           const createdBrandKit = await brandKitAPI.create({
-            primary_color:   brand.primaryColor,
-            secondary_color: brand.secondaryColor,
-            accent_color:    brand.accentColor,
-            primary_font:    brand.primaryFont,
-            secondary_font:  brand.secondaryFont,
-            adjectives:      brand.adjectives || null,
-            dos:             brand.dos || null,
-            donts:           brand.donts || null,
-            preset_name:     selectedPreset || null,
+            primary_color:   brand.primaryColor   || null,
+            secondary_color: brand.secondaryColor || null,
+            accent_color:    brand.accentColor    || null,
+            primary_font:    brand.primaryFont    || null,
+            secondary_font:  brand.secondaryFont  || null,
+            adjectives:      brand.adjectives     || null,
+            dos:             brand.dos            || null,
+            donts:           brand.donts          || null,
+            preset_name:     selectedPreset       || null,
+            pdf_path:        pdfPath,
           });
           applyBrandTheme(createdBrandKit);
         }
@@ -260,17 +267,8 @@ export default function OnboardingPage() {
     }}>
       <div style={{ width: "100%", maxWidth: "32rem" }}>
 
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "10px", marginBottom: "40px" }}>
-          <div style={{
-            width: "32px", height: "32px", borderRadius: "8px",
-            backgroundColor: "var(--color-accent)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>
-            <div style={{ width: "12px", height: "12px", borderRadius: "3px", backgroundColor: "var(--color-sidebar-bg)" }} />
-          </div>
-          <span style={{ color: "#ffffff", fontWeight: 600, fontSize: "1.125rem", letterSpacing: "-0.02em" }}>
-            ClinAds Pro
-          </span>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "40px" }}>
+          <img src="/alt1_trails_logo.svg" alt="ALT Trials" style={{ height: "56px", width: "auto", display: "block", margin: "0 auto" }} />
         </div>
 
         <StepIndicator currentStep={step} onStepClick={goToStep} />

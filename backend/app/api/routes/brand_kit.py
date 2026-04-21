@@ -3,10 +3,11 @@ Brand Kit Routes
 Owner: Backend Dev 2
 Dependencies: M1, M2
 
-POST /onboarding/logo  — Upload company logo, returns stored URL
-POST /brand-kit/       — Create brand kit during onboarding (Admin only)
-GET  /brand-kit/       — Fetch company brand kit
-PATCH /brand-kit/      — Update brand kit (editable from settings)
+POST /onboarding/logo        — Upload company logo, returns stored URL
+POST /brand-kit/             — Create brand kit during onboarding (Admin only)
+GET  /brand-kit/             — Fetch company brand kit
+PATCH /brand-kit/            — Update brand kit (editable from settings)
+POST /brand-kit/extract-pdf  — Extract brand colors/fonts from a PDF (returns JSON, does not save)
 """
 
 import uuid
@@ -88,6 +89,7 @@ async def create_brand_kit(
         dos=body.dos,
         donts=body.donts,
         preset_name=body.preset_name,
+        pdf_path=body.pdf_path,
     )
     db.add(brand_kit)
     await db.flush()
@@ -126,3 +128,71 @@ async def update_brand_kit(
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(brand_kit, field, value)
     return brand_kit
+
+
+# ─── Brand Kit PDF Storage ───────────────────────────────────────────────────
+
+@router.post("/brand-kit/upload-pdf")
+async def upload_brand_pdf(
+    file: UploadFile = File(...),
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR])),
+):
+    """
+    Upload and persist the brand guidelines PDF for a company.
+    Returns {"pdf_path": "<stored path>"} — pass this as pdf_path
+    when calling POST or PATCH /brand-kit/.
+    """
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
+
+    filename = f"{user.company_id}_{uuid.uuid4().hex}.pdf"
+    pdf_path = await file_storage.save(
+        file=file,
+        subfolder="brand-pdfs",
+        filename=filename,
+    )
+    return {"pdf_path": pdf_path}
+
+
+# ─── PDF Brand Extraction ─────────────────────────────────────────────────────
+
+@router.post("/brand-kit/extract-pdf")
+async def extract_brand_from_pdf(
+    file: UploadFile = File(...),
+):
+    """
+    Upload a brand guidelines PDF and extract color/font/tone signals from it.
+    Uses pymupdf to read vector colors and font names, then Claude to interpret
+    them into clean hex values and Google Font names.
+
+    Returns the extracted brand fields as JSON — does NOT save to the database.
+    The client should review and then call POST/PATCH /brand-kit/ to persist.
+    """
+    if file.content_type != "application/pdf":
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are accepted for brand extraction.",
+        )
+
+    pdf_bytes = await file.read()
+    if len(pdf_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    try:
+        from app.services.brand_kit_extractor import extract_brand_from_pdf
+        result = await extract_brand_from_pdf(pdf_bytes)
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="pymupdf is not installed on this server. "
+                   "Run `pip install pymupdf` and restart.",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Brand extraction failed: {exc}",
+        )
+
+    return result

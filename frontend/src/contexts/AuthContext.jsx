@@ -103,6 +103,15 @@ export function AuthProvider({ children }) {
     setUser(userData);
   }, []);
 
+  const updateFullName = useCallback((name) => {
+    setUser((prev) => {
+      if (!prev) return prev;
+      const updated = { ...prev, fullName: name };
+      localStorage.setItem("user", JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+
   const logout = useCallback(() => {
     localStorage.clear();
     // clearFlag=true removes the override so the next company starts fresh.
@@ -116,6 +125,7 @@ export function AuthProvider({ children }) {
     login,
     logout,
     hydrateUser,
+    updateFullName,
     isAuthenticated: !!user,
     role: user?.role,
     companyId: user?.companyId,

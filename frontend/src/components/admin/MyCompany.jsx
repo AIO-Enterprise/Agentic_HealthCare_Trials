@@ -825,6 +825,8 @@ function BrandKitPanel() {
   const [saved,          setSaved]          = useState(false);
   const [error,          setError]          = useState("");
   const [usingDefault,   setUsingDefault]   = useState(isDefaultThemeOverrideActive);
+  const [extracting,     setExtracting]     = useState(false);
+  const [extractError,   setExtractError]   = useState("");
   const brandPdfRef = useRef(null);
   const [brandPdfFile, setBrandPdfFile] = useState(null);
   const { user, companyIndustry } = useAuth();
@@ -868,13 +870,7 @@ function BrandKitPanel() {
       });
   }, []);
 
-  // Match company industry to a preset group — fallback to Technology
-  const industryPresets = (() => {
-    const key = Object.keys(BRAND_PRESETS).find(
-      (k) => companyIndustry?.toLowerCase().includes(k.toLowerCase())
-    );
-    return key ? BRAND_PRESETS[key] : DEFAULT_PRESETS;
-  })();
+  const industryPresets = DEFAULT_PRESETS;
 
   const applyPreset = (preset) => {
     const { name, ...brandFields } = preset;
@@ -885,14 +881,35 @@ function BrandKitPanel() {
     setSaved(false);
   };
 
-  const handleBrandPdfChange = (e) => {
+  const handleBrandPdfChange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     if (file.type !== "application/pdf") { setError("Please upload a PDF file."); return; }
     setBrandPdfFile(file);
     setSelectedPreset(null);
     setError("");
+    setExtractError("");
     setSaved(false);
+
+    setExtracting(true);
+    try {
+      const extracted = await brandKitAPI.extractPdf(file);
+      setBrand((prev) => ({
+        ...prev,
+        primaryColor:   extracted.primaryColor   || prev?.primaryColor   || null,
+        secondaryColor: extracted.secondaryColor || prev?.secondaryColor || null,
+        accentColor:    extracted.accentColor    || prev?.accentColor    || null,
+        primaryFont:    extracted.primaryFont    || prev?.primaryFont    || null,
+        secondaryFont:  extracted.secondaryFont  || prev?.secondaryFont  || null,
+        adjectives:     extracted.adjectives     || prev?.adjectives     || "",
+        dos:            extracted.dos            || prev?.dos            || "",
+        donts:          extracted.donts          || prev?.donts          || "",
+      }));
+    } catch (err) {
+      setExtractError(err.message || "Brand extraction failed.");
+    } finally {
+      setExtracting(false);
+    }
   };
 
   const clearBrandPdf = () => {
@@ -905,6 +922,13 @@ function BrandKitPanel() {
     setError("");
     setSaved(false);
     try {
+      // Upload PDF if a new one was chosen
+      let pdfPath = brandKit?.pdf_path || null;
+      if (brandPdfFile) {
+        const uploadRes = await brandKitAPI.uploadPdf(brandPdfFile);
+        pdfPath = uploadRes.pdf_path;
+      }
+
       const payload = {
         primary_color:   brand.primaryColor   || null,
         secondary_color: brand.secondaryColor || null,
@@ -915,6 +939,7 @@ function BrandKitPanel() {
         dos:             brand.dos            || null,
         donts:           brand.donts          || null,
         preset_name:     selectedPreset       || null,
+        pdf_path:        pdfPath,
       };
 
       // Use update if brand kit exists, create if it doesn't
@@ -1075,19 +1100,29 @@ function BrandKitPanel() {
             <div style={{
               display: "flex", alignItems: "center", gap: "10px",
               padding: "12px 14px", borderRadius: "10px", marginBottom: "20px",
-              border: "1px solid var(--color-accent)",
-              backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.07)",
+              border: `1px solid ${extractError ? "#ef4444" : "var(--color-accent)"}`,
+              backgroundColor: extractError
+                ? "rgba(239,68,68,0.07)"
+                : "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.07)",
             }}>
-              <FileText size={18} style={{ color: "var(--color-accent)", flexShrink: 0 }} />
+              {extracting
+                ? <Loader2 size={18} style={{ color: "var(--color-accent)", flexShrink: 0, animation: "spin 1s linear infinite" }} />
+                : <FileText size={18} style={{ color: extractError ? "#ef4444" : "var(--color-accent)", flexShrink: 0 }} />
+              }
               <div style={{ flex: 1, minWidth: 0 }}>
                 <p style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--color-input-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {brandPdfFile.name}
                 </p>
-                <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)" }}>
-                  {(brandPdfFile.size / 1024).toFixed(0)} KB · AI will parse this during training
+                <p style={{ fontSize: "0.72rem", color: extractError ? "#ef4444" : "var(--color-sidebar-text)" }}>
+                  {extracting
+                    ? "Extracting colors and fonts…"
+                    : extractError
+                      ? extractError
+                      : `${(brandPdfFile.size / 1024).toFixed(0)} KB · Colors and fonts applied`
+                  }
                 </p>
               </div>
-              <Check size={14} style={{ color: "var(--color-accent)", flexShrink: 0 }} />
+              {!extracting && !extractError && <Check size={14} style={{ color: "var(--color-accent)", flexShrink: 0 }} />}
               <button type="button" onClick={clearBrandPdf}
                 style={{ background: "none", border: "none", cursor: "pointer", padding: "2px", display: "flex" }}>
                 <X size={14} style={{ color: "var(--color-sidebar-text)" }} />

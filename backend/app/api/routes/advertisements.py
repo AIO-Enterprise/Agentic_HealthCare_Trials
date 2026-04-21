@@ -1966,9 +1966,9 @@ async def _bg_rewrite_strategy(
     restore_status: AdStatus,
 ) -> None:
     """
-    Background task: run Curator rewrite, then restore the campaign to its
-    pre-rewrite status (UNDER_REVIEW or STRATEGY_CREATED) so the PM's queue
-    position is preserved. On failure, also restores original status.
+    Background task: rewrite strategy with Curator, then restore the campaign to
+    exactly the status it had before the rewrite so no role hand-off is needed.
+    On failure, also restores original status so the campaign is not stuck in OPTIMIZING.
     """
     from app.db.database import async_session_factory
     try:
@@ -1992,13 +1992,11 @@ async def _bg_rewrite_strategy(
                 key=lambda d: d.priority, reverse=True,
             )
 
+            # Step 1: regenerate strategy
             curator = CuratorService(db, company_id)
             strategy = await curator.generate_strategy(ad, all_docs, extra_instructions=instructions)
-
             ad.strategy_json = strategy
             flag_modified(ad, "strategy_json")
-            # Restore to original state — preserves PM's review queue position
-            ad.status = restore_status
 
             preview = instructions[:120] + ("…" if len(instructions) > 120 else "")
             db.add(Review(
@@ -2008,6 +2006,12 @@ async def _bg_rewrite_strategy(
                 status="pending",
                 comments=f"AI Re-Strategy completed: '{preview}'",
             ))
+
+            # Restore campaign to exactly the state it was in before the rewrite
+            # (STRATEGY_CREATED, UNDER_REVIEW, or ETHICS_REVIEW). This keeps the
+            # campaign in the same role's queue without any extra hand-offs.
+            ad.status = restore_status
+
             await db.commit()
     except Exception as e:
         logger.error("Background rewrite-strategy failed for ad %s: %s", ad_id, e, exc_info=True)
@@ -2053,18 +2057,13 @@ async def rewrite_strategy(
             detail=f"Strategy can only be rewritten from STRATEGY_CREATED, UNDER_REVIEW, or ETHICS_REVIEW, not '{ad.status.value}'",
         )
 
-    restore_status = ad.status  # remember where to return after rewrite
-
-    ad.status = AdStatus.OPTIMIZING
-    await db.flush()
-
     background_tasks.add_task(
         _bg_rewrite_strategy,
         ad_id,
         user.company_id,
         user.id,
         body.instructions,
-        restore_status,
+        ad.status,
     )
     return ad
 
@@ -2454,8 +2453,23 @@ async def approve_optimizer_changes(
                 deployed.append("creatives: no Meta campaign or no output files")
 
         elif field:
-            # Content field change is already staged in strategy_json — nothing more to deploy
-            deployed.append(f"field '{field}' already staged")
+            new_val = sugg_approve.get("new_value")
+            if new_val is not None:
+                # The field was already written to strategy_json by /minor-edit when
+                # the Publisher applied the suggestion. Re-write here to ensure it
+                # persists even if the Review was created by a path that skipped it.
+                strategy = dict(ad.strategy_json if isinstance(ad.strategy_json, dict) else {})
+                keys = field.split(".")
+                node = strategy
+                for key in keys[:-1]:
+                    node = node.setdefault(key, {})
+                node[keys[-1]] = new_val
+                ad.strategy_json = strategy
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(ad, "strategy_json")
+                deployed.append(f"field '{field}' confirmed in strategy")
+            else:
+                deployed.append(f"field '{field}' — no new_value in suggestion")
 
         review.status = "approved"
 

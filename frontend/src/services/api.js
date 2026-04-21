@@ -285,6 +285,38 @@ export const brandKitAPI = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+
+  uploadPdf: (file) => {
+    const form = new FormData();
+    form.append("file", file);
+    const token = localStorage.getItem("token");
+    return fetch(`${API_BASE}/brand-kit/upload-pdf`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    }).then(async (res) => {
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      return res.json(); // { pdf_path }
+    });
+  },
+
+  extractPdf: (file) => {
+    const form = new FormData();
+    form.append("file", file);
+    return fetch(`${API_BASE}/brand-kit/extract-pdf`, {
+      method: "POST",
+      body: form,
+    }).then(async (res) => {
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      return res.json();
+    });
+  },
 };
 
 // ─── M2: Users ───────────────────────────────────────────────────────────────
@@ -300,6 +332,12 @@ export const usersAPI = {
 
   deactivate: (userId) =>
     request(`/users/${userId}/deactivate`, { method: "PATCH" }),
+
+  updateMe: (data) =>
+    request("/users/me", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
 };
 
 // ─── M3: Documents ───────────────────────────────────────────────────────────

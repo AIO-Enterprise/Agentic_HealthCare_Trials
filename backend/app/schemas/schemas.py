@@ -98,6 +98,9 @@ class LogoUploadResponse(BaseModel):
 
 # ─── User Schemas ─────────────────────────────────────────────────────────────
 
+class UserUpdateSelf(BaseModel):
+    full_name: str = Field(..., min_length=2, max_length=256)
+
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8)
@@ -172,6 +175,7 @@ class BrandKitCreate(BaseModel):
     dos: Optional[str] = None
     donts: Optional[str] = None
     preset_name: Optional[str] = None
+    pdf_path: Optional[str] = None
 
 class BrandKitOut(BaseModel):
     id: str
@@ -202,6 +206,7 @@ class BrandKitUpdate(BaseModel):
     dos: Optional[str] = None
     donts: Optional[str] = None
     preset_name: Optional[str] = None
+    pdf_path: Optional[str] = None
 
 
 # ─── Advertisement Schemas ────────────────────────────────────────────────────

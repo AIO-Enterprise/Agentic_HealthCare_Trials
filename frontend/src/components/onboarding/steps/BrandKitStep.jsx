@@ -1,6 +1,7 @@
-import React, { useRef } from "react";
-import { Check, Upload, X, FileText } from "lucide-react";
-import {DEFAULT_PRESETS, BRAND_PRESETS } from "../Constants";
+import React, { useRef, useState } from "react";
+import { Check, Upload, X, FileText, Loader } from "lucide-react";
+import { DEFAULT_PRESETS, BRAND_PRESETS } from "../Constants";
+import { brandKitAPI } from "../../../services/api";
 /**
  * Step 3 — Brand Kit (optional)
  * Two mutually exclusive choices:
@@ -30,13 +31,9 @@ export default function BrandKitStep({
 }) {
   const brandPdfRef = useRef(null);
 
-  // Match industry string to a preset group, fallback to Technology
-  const industryPresets = (() => {
-    const key = Object.keys(BRAND_PRESETS).find(
-      (k) => industry?.toLowerCase().includes(k.toLowerCase())
-    );
-    return key ? BRAND_PRESETS[key] : DEFAULT_PRESETS;
-  })();
+  const industryPresets = DEFAULT_PRESETS;
+  const [extracting, setExtracting] = useState(false);
+  const [extractError, setExtractError] = useState("");
 
   const applyPreset = (preset) => {
     const { name, ...brandFields } = preset;
@@ -47,7 +44,7 @@ export default function BrandKitStep({
     if (brandPdfRef.current) brandPdfRef.current.value = "";
   };
 
-  const handleBrandPdfChange = (e) => {
+  const handleBrandPdfChange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     if (file.type !== "application/pdf") {
@@ -55,9 +52,28 @@ export default function BrandKitStep({
       return;
     }
     setBrandPdfFile(file);
-    // Clear preset when a PDF is chosen
     setSelectedPreset(null);
     setError("");
+    setExtractError("");
+
+    setExtracting(true);
+    try {
+      const extracted = await brandKitAPI.extractPdf(file);
+      setBrand({
+        primaryColor:   extracted.primaryColor   || null,
+        secondaryColor: extracted.secondaryColor || null,
+        accentColor:    extracted.accentColor    || null,
+        primaryFont:    extracted.primaryFont    || null,
+        secondaryFont:  extracted.secondaryFont  || null,
+        adjectives:     extracted.adjectives     || "",
+        dos:            extracted.dos            || "",
+        donts:          extracted.donts          || "",
+      });
+    } catch (err) {
+      setExtractError(err.message || "Brand extraction failed. Colors and fonts were not applied.");
+    } finally {
+      setExtracting(false);
+    }
   };
 
   const clearBrandPdf = () => {
@@ -166,19 +182,27 @@ export default function BrandKitStep({
           <div style={{
             display: "flex", alignItems: "center", gap: "10px",
             padding: "12px 14px", borderRadius: "10px",
-            border: "1px solid var(--color-accent)",
-            backgroundColor: "rgba(16,185,129,0.08)",
+            border: `1px solid ${extractError ? "#ef4444" : "var(--color-accent)"}`,
+            backgroundColor: extractError ? "rgba(239,68,68,0.07)" : "rgba(16,185,129,0.08)",
           }}>
-            <FileText size={18} style={{ color: "var(--color-accent)", flexShrink: 0 }} />
+            {extracting
+              ? <Loader size={18} style={{ color: "var(--color-accent)", flexShrink: 0, animation: "spin 1s linear infinite" }} />
+              : <FileText size={18} style={{ color: extractError ? "#ef4444" : "var(--color-accent)", flexShrink: 0 }} />
+            }
             <div style={{ flex: 1, minWidth: 0 }}>
               <p style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--color-input-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {brandPdfFile.name}
               </p>
-              <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)" }}>
-                {(brandPdfFile.size / 1024).toFixed(0)} KB · AI will parse this during training
+              <p style={{ fontSize: "0.72rem", color: extractError ? "#ef4444" : "var(--color-sidebar-text)" }}>
+                {extracting
+                  ? "Extracting colors and fonts…"
+                  : extractError
+                    ? extractError
+                    : `${(brandPdfFile.size / 1024).toFixed(0)} KB · Colors and fonts applied`
+                }
               </p>
             </div>
-            <Check size={14} style={{ color: "var(--color-accent)", flexShrink: 0 }} />
+            {!extracting && !extractError && <Check size={14} style={{ color: "var(--color-accent)", flexShrink: 0 }} />}
             <button
               type="button"
               onClick={clearBrandPdf}

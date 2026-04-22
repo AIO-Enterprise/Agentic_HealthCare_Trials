@@ -708,6 +708,13 @@ async def _bg_generate_strategy(ad_id: str, company_id: str) -> None:
                 curator.generate_questionnaire(ad, all_docs),
             )
 
+            if strategy.get("parse_error"):
+                # Strategy JSON could not be parsed — reset to DRAFT so user can retry
+                logger.error("Strategy parse error for ad %s: %s", ad_id, strategy.get("raw_response", "")[:200])
+                ad.status = AdStatus.DRAFT
+                await db.commit()
+                return
+
             ad.strategy_json  = strategy
             ad.questionnaire  = questionnaire
             ad.status         = AdStatus.STRATEGY_CREATED

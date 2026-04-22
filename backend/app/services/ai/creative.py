@@ -285,7 +285,7 @@ If no formats are defined, generate three 1080x1920 Meta Story Ads — each a di
                     "format": "1080x1920 Meta Ad",
                     "headline": f"Discover {ad.title}",
                     "body": "Cutting-edge solutions built around your needs. Trusted by professionals worldwide.",
-                    "cta": "Learn More",
+                    "cta": "Book Now",
                     "layout": {
                         "top_bg_color": "#0a1f5c",
                         "top_height_pct": 42,

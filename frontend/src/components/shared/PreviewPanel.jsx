@@ -254,6 +254,26 @@ export default function PreviewPanel({ ads }) {
     setError(null);
   };
 
+  // Poll GET /{adId} until updated_at changes (background task committed).
+  // Tolerates transient 5xx / network errors — keeps the spinner up and
+  // keeps trying until the ad update commits or the deadline is hit.
+  const pollUntilUpdated = async (adId, beforeUpdatedAt, timeoutMs = 300_000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 4000));
+      try {
+        const latest = await adsAPI.get(adId);
+        if (latest.updated_at !== beforeUpdatedAt) return latest;
+      } catch (err) {
+        const msg = String(err?.message || "");
+        const isTransient = /HTTP 5\d\d|503|502|504|Failed to fetch|NetworkError/i.test(msg);
+        if (!isTransient) throw err;
+        // swallow and keep polling
+      }
+    }
+    throw new Error("Timed out waiting for generation to complete. Please refresh the page.");
+  };
+
   const handleRegen = async (type) => {
     if (!currentAd) return;
     setError(null);
@@ -262,6 +282,7 @@ export default function PreviewPanel({ ads }) {
       if (instructions.trim()) {
         await adsAPI.rewriteStrategy(currentAd.id, { instructions: instructions.trim() });
       }
+      const beforeUpdatedAt = currentAd.updated_at;
       if (type === "creatives") {
         await adsAPI.generateCreatives(currentAd.id);
         setPreviewTab("creatives");
@@ -269,8 +290,10 @@ export default function PreviewPanel({ ads }) {
         await adsAPI.generateWebsite(currentAd.id);
         setPreviewTab("website");
       }
-      // Refresh local copy with the updated data
-      const fresh = await adsAPI.get(currentAd.id);
+      // Poll until the background task commits a new updated_at.
+      // Website generation is slower (Claude + image gen + EFS write) so give it longer.
+      const timeoutMs = type === "website" ? 600_000 : 300_000;
+      const fresh = await pollUntilUpdated(currentAd.id, beforeUpdatedAt, timeoutMs);
       setCurrentAd(fresh);
     } catch (err) {
       setError(err.message);

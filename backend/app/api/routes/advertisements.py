@@ -708,6 +708,13 @@ async def _bg_generate_strategy(ad_id: str, company_id: str) -> None:
                 curator.generate_questionnaire(ad, all_docs),
             )
 
+            if strategy.get("parse_error"):
+                # Strategy JSON could not be parsed — reset to DRAFT so user can retry
+                logger.error("Strategy parse error for ad %s: %s", ad_id, strategy.get("raw_response", "")[:200])
+                ad.status = AdStatus.DRAFT
+                await db.commit()
+                return
+
             ad.strategy_json  = strategy
             ad.questionnaire  = questionnaire
             ad.status         = AdStatus.STRATEGY_CREATED
@@ -715,12 +722,12 @@ async def _bg_generate_strategy(ad_id: str, company_id: str) -> None:
             flag_modified(ad, "questionnaire")
 
             # Auto voice recommendation for voicebot campaigns
-            if "voicebot" in (ad.ad_type or []):
+            if "voicebot" in (ad.ad_type if isinstance(ad.ad_type, list) else []):
                 await db.flush()
                 try:
                     vb_svc = VoicebotAgentService(db)
                     rec = await vb_svc.recommend_voice(ad_id)
-                    cfg = dict(ad.bot_config or {})
+                    cfg = dict(ad.bot_config if isinstance(ad.bot_config, dict) else {})
                     cfg.setdefault("voice_id",           rec["voice_id"])
                     cfg.setdefault("conversation_style", rec["conversation_style"])
                     cfg.setdefault("first_message",      rec["first_message"])
@@ -780,6 +787,13 @@ async def _bg_submit_for_review(ad_id: str, company_id: str) -> None:
             ad.ad_details   = review_output.get("ad_details")
             flag_modified(ad, "website_reqs")
             flag_modified(ad, "ad_details")
+            if ad.status != AdStatus.STRATEGY_CREATED:
+                logger.warning(
+                    "Skipping UNDER_REVIEW transition for ad %s — state is '%s', expected STRATEGY_CREATED",
+                    ad_id, ad.status.value,
+                )
+                await db.commit()
+                return
             ad.status = AdStatus.UNDER_REVIEW
             await db.commit()
     except Exception as e:
@@ -807,6 +821,11 @@ async def _bg_generate_website(ad_id: str, company_id: str) -> None:
             svc = WebsiteAgentService(company_id=company_id)
             url = await svc.generate_website(ad, brand_kit, company)
             ad.output_url = url
+            # The URL is deterministic (/outputs/{company}/{ad}/website/index.html)
+            # so regenerating produces the same value and SQLAlchemy would skip the
+            # UPDATE, meaning onupdate=_now never fires on updated_at and the
+            # frontend poll times out. Force the UPDATE by explicitly touching updated_at.
+            ad.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             await db.commit()
     except Exception as e:
         logger.error("Background website generation failed for ad %s: %s", ad_id, e, exc_info=True)
@@ -848,6 +867,12 @@ async def generate_strategy(
     if not ad:
         raise HTTPException(status_code=404, detail="Advertisement not found")
 
+    if ad.status not in (AdStatus.DRAFT, AdStatus.STRATEGY_CREATED):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Strategy can only be generated from DRAFT or STRATEGY_CREATED, not '{ad.status.value}'",
+        )
+
     ad.status = AdStatus.GENERATING
     await db.flush()
     background_tasks.add_task(_bg_generate_strategy, ad_id, user.company_id)
@@ -873,6 +898,12 @@ async def submit_for_review(
     ad = result.scalar_one_or_none()
     if not ad:
         raise HTTPException(status_code=404, detail="Advertisement not found")
+
+    if ad.status != AdStatus.STRATEGY_CREATED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Campaign can only be submitted for review from STRATEGY_CREATED, not '{ad.status.value}'",
+        )
 
     background_tasks.add_task(_bg_submit_for_review, ad_id, user.company_id)
     return ad
@@ -900,14 +931,26 @@ async def create_review(
     ad = ad_result.scalar_one_or_none()
     if ad:
         if body.status == "approved":
-            # Strategy approved by PM → send to Ethics Manager queue
             if body.review_type == "strategy":
+                if ad.status != AdStatus.UNDER_REVIEW:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Strategy review approval requires UNDER_REVIEW state, not '{ad.status.value}'",
+                    )
                 ad.status = AdStatus.ETHICS_REVIEW
-            # Ethics approved → ready for publishing
             elif body.review_type == "ethics":
+                if ad.status != AdStatus.ETHICS_REVIEW:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Ethics review approval requires ETHICS_REVIEW state, not '{ad.status.value}'",
+                    )
                 ad.status = AdStatus.APPROVED
         elif body.status in ("revision", "rejected"):
-            # Any rejection/revision → back to the general review queue
+            if ad.status not in (AdStatus.UNDER_REVIEW, AdStatus.ETHICS_REVIEW):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Revision/rejection requires UNDER_REVIEW or ETHICS_REVIEW state, not '{ad.status.value}'",
+                )
             ad.status = AdStatus.UNDER_REVIEW
 
     await db.flush()
@@ -1005,9 +1048,9 @@ async def distribute_to_meta(
 
     cfg = body.get("config") or {}
 
-    destination_url    = cfg.get("destination_url", "").strip()
-    daily_budget_str   = str(cfg.get("daily_budget", "10")).strip()
-    countries_str      = cfg.get("targeting_countries", "US").strip()
+    destination_url    = (cfg.get("destination_url") or "").strip()
+    daily_budget_str   = str(cfg.get("daily_budget") or "10").strip()
+    countries_str      = (cfg.get("targeting_countries") or "US").strip()
     selected_creatives = cfg.get("selected_creatives") or []
     display_url        = (cfg.get("display_url")  or "").strip() or None
     addon_type         = (cfg.get("addon_type")   or "").strip() or None
@@ -1025,9 +1068,9 @@ async def distribute_to_meta(
     conn = conn_result.scalar_one_or_none()
 
     # Allow manual override in config for backwards-compatibility / testing
-    access_token  = cfg.get("access_token",  "").strip() or (conn.access_token  if conn else "")
-    ad_account_id = cfg.get("ad_account_id", "").strip() or (conn.ad_account_id if conn else "")
-    page_id       = cfg.get("page_id",       "").strip() or (conn.page_id       if conn else "")
+    access_token  = (cfg.get("access_token")  or "").strip() or (conn.access_token  if conn else "")
+    ad_account_id = (cfg.get("ad_account_id") or "").strip() or (conn.ad_account_id if conn else "")
+    page_id       = (cfg.get("page_id")       or "").strip() or (conn.page_id       if conn else "")
 
     # ── Validate required fields ──────────────────────────────────────────────
     missing = [
@@ -1077,7 +1120,8 @@ async def distribute_to_meta(
     # For "phone" add-on, use the voicebot number stored during agent provisioning.
     # No manual number entry required — the CTA always points at the voice agent.
     if addon_type == "phone" and not addon_phone:
-        addon_phone = (ad.bot_config or {}).get("voice_phone_number") or None
+        bc = ad.bot_config if isinstance(ad.bot_config, dict) else {}
+        addon_phone = bc.get("voice_phone_number") or None
         if not addon_phone:
             raise HTTPException(
                 status_code=422,
@@ -1088,6 +1132,11 @@ async def distribute_to_meta(
             )
 
     # ── Publish to Meta ───────────────────────────────────────────────────────
+    # Reuse the existing campaign ID so analytics history is preserved, but always
+    # create a fresh adset — archived adsets cannot contain new active ads.
+    existing_bot = ad.bot_config if isinstance(ad.bot_config, dict) else {}
+    existing_campaign_id = existing_bot.get("meta_campaign_id") or None
+
     svc = MetaAdsService(access_token=access_token, ad_account_id=ad_account_id)
     try:
         meta_result = await svc.publish_campaign(
@@ -1102,6 +1151,7 @@ async def distribute_to_meta(
             display_url=display_url,
             addon_type=addon_type,
             addon_phone=addon_phone,
+            existing_campaign_id=existing_campaign_id,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -1113,7 +1163,7 @@ async def distribute_to_meta(
 
     # ── Persist the Ads Manager URL on the ad ────────────────────────────────
     from sqlalchemy.orm.attributes import flag_modified
-    existing_meta = ad.bot_config or {}
+    existing_meta = dict(ad.bot_config if isinstance(ad.bot_config, dict) else {})
     existing_meta["meta_campaign_id"] = meta_result["campaign_id"]
     existing_meta["meta_adset_id"]    = meta_result["adset_id"]
     existing_meta["meta_ad_ids"]      = meta_result["ad_ids"]
@@ -1177,7 +1227,7 @@ def _get_meta_conn_and_ids(ad, conn):
     Extract Meta campaign_id, ad_ids, access_token, ad_account_id, page_id from an ad.
     Raises HTTPException if anything required is missing.
     """
-    bot = ad.bot_config or {}
+    bot = ad.bot_config if isinstance(ad.bot_config, dict) else {}
     campaign_id = bot.get("meta_campaign_id")
     ad_ids = bot.get("meta_ad_ids", [])
 
@@ -1240,9 +1290,10 @@ async def list_meta_ads(
     finally:
         await svc.close()
 
+    bc_list = ad.bot_config if isinstance(ad.bot_config, dict) else {}
     return {
         "campaign_id": campaign_id,
-        "adset_id": (ad.bot_config or {}).get("meta_adset_id"),
+        "adset_id": bc_list.get("meta_adset_id"),
         "ads": ads,
     }
 
@@ -1289,7 +1340,7 @@ async def update_meta_ad(
     conn = conn_result.scalar_one_or_none()
     _, _, access_token, ad_account_id, page_id_default = _get_meta_conn_and_ids(ad, conn)
 
-    bot        = ad.bot_config or {}
+    bot        = ad.bot_config if isinstance(ad.bot_config, dict) else {}
     adset_id   = bot.get("meta_adset_id")
     campaign_id_stored = bot.get("meta_campaign_id")
 
@@ -1322,7 +1373,7 @@ async def update_meta_ad(
                 image_hash=image_hash,
                 headline=body.get("headline", ""),
                 body=body.get("body", ""),
-                cta_type=(body.get("cta_type") or "LEARN_MORE").upper(),
+                cta_type=(body.get("cta_type") or "BOOK_NOW").upper(),
                 link_url=body.get("link_url", ""),
                 ad_name=ad.title,
             )
@@ -1383,7 +1434,8 @@ async def update_meta_budget(
     conn = conn_result.scalar_one_or_none()
     _, _, access_token, ad_account_id, _ = _get_meta_conn_and_ids(ad, conn)
 
-    adset_id = (ad.bot_config or {}).get("meta_adset_id")
+    bc_budget = ad.bot_config if isinstance(ad.bot_config, dict) else {}
+    adset_id = bc_budget.get("meta_adset_id")
     if not adset_id:
         raise HTTPException(status_code=400, detail="No Meta ad set found for this campaign. Upload to Meta first.")
 
@@ -1446,7 +1498,7 @@ async def delete_meta_ad(
         await svc.close()
 
     # Remove from stored ad_ids list
-    bot = dict(ad.bot_config or {})
+    bot = dict(ad.bot_config if isinstance(ad.bot_config, dict) else {})
     existing_ids = bot.get("meta_ad_ids", [])
     bot["meta_ad_ids"] = [i for i in existing_ids if i != meta_ad_id]
     ad.bot_config = bot
@@ -1512,10 +1564,11 @@ async def get_meta_insights(
         cpc         = float(row.get("cpc", 0) or 0)
         # Count link click actions as conversions
         actions = row.get("actions") or []
+        actions = actions if isinstance(actions, list) else []
         conversions = sum(
             int(a.get("value", 0) or 0)
             for a in actions
-            if a.get("action_type") in ("offsite_conversion.fb_pixel_lead", "link_click")
+            if isinstance(a, dict) and a.get("action_type") in ("offsite_conversion.fb_pixel_lead", "link_click")
         )
         click_rate = round(clicks / impressions * 100, 4) if impressions else 0.0
 
@@ -1601,9 +1654,9 @@ async def get_schedule_suggestions(
     )
     analytics = analytics_result.scalars().all()
 
-    strategy = ad.strategy_json or {}
+    strategy = ad.strategy_json if isinstance(ad.strategy_json, dict) else {}
     kpis     = strategy.get("kpis", [])
-    audience = ad.target_audience or {}
+    audience = ad.target_audience if isinstance(ad.target_audience, dict) else {}
     recent_perf = [
         {
             "date": a.date_label,
@@ -1718,22 +1771,18 @@ async def serve_protocol_document_file(
 async def serve_website(
     ad_id: str,
     download: bool = False,
-    user: User = Depends(_user_from_query_token_ads),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Serve the generated HTML landing page.
+    Serve the generated HTML landing page — public, no auth required.
+    The page contains no secrets or PII; it is safe to share as a Meta Ads redirect URL.
     ?download=true → Content-Disposition: attachment (triggers browser download).
-    Accessible via the existing /api proxy — no separate /outputs proxy needed.
     """
     from fastapi.responses import HTMLResponse, Response
     import os as _os
 
     result = await db.execute(
-        select(Advertisement).where(
-            Advertisement.id == ad_id,
-            Advertisement.company_id == user.company_id,
-        )
+        select(Advertisement).where(Advertisement.id == ad_id)
     )
     ad = result.scalar_one_or_none()
     if not ad:
@@ -1881,7 +1930,7 @@ async def minor_edit_strategy(
         raise HTTPException(status_code=400, detail="No strategy to edit")
 
     # Apply the dot-path patch
-    strategy = dict(ad.strategy_json)
+    strategy = dict(ad.strategy_json if isinstance(ad.strategy_json, dict) else {})
     keys = body.field.split(".")
     node = strategy
     for key in keys[:-1]:
@@ -1922,16 +1971,87 @@ async def minor_edit_strategy(
 
 # ─── Reviewer: AI Re-Strategy ─────────────────────────────────────────────────
 
+async def _bg_rewrite_strategy(
+    ad_id: str,
+    company_id: str,
+    reviewer_id: str,
+    instructions: str,
+    restore_status: AdStatus,
+) -> None:
+    """
+    Background task: rewrite strategy with Curator, then restore the campaign to
+    exactly the status it had before the rewrite so no role hand-off is needed.
+    On failure, also restores original status so the campaign is not stuck in OPTIMIZING.
+    """
+    from app.db.database import async_session_factory
+    try:
+        async with async_session_factory() as db:
+            result = await db.execute(select(Advertisement).where(Advertisement.id == ad_id))
+            ad = result.scalar_one_or_none()
+            if not ad:
+                return
+
+            company_docs_result = await db.execute(
+                select(CompanyDocument).where(CompanyDocument.company_id == company_id)
+            )
+            protocol_docs_result = await db.execute(
+                select(AdvertisementDocument).where(
+                    AdvertisementDocument.advertisement_id == ad_id,
+                    AdvertisementDocument.company_id == company_id,
+                )
+            )
+            all_docs = sorted(
+                list(company_docs_result.scalars().all()) + list(protocol_docs_result.scalars().all()),
+                key=lambda d: d.priority, reverse=True,
+            )
+
+            # Step 1: regenerate strategy
+            curator = CuratorService(db, company_id)
+            strategy = await curator.generate_strategy(ad, all_docs, extra_instructions=instructions)
+            ad.strategy_json = strategy
+            flag_modified(ad, "strategy_json")
+
+            preview = instructions[:120] + ("…" if len(instructions) > 120 else "")
+            db.add(Review(
+                advertisement_id=ad_id,
+                reviewer_id=reviewer_id,
+                review_type="system",
+                status="pending",
+                comments=f"AI Re-Strategy completed: '{preview}'",
+            ))
+
+            # Restore campaign to exactly the state it was in before the rewrite
+            # (STRATEGY_CREATED, UNDER_REVIEW, or ETHICS_REVIEW). This keeps the
+            # campaign in the same role's queue without any extra hand-offs.
+            ad.status = restore_status
+
+            await db.commit()
+    except Exception as e:
+        logger.error("Background rewrite-strategy failed for ad %s: %s", ad_id, e, exc_info=True)
+        # Restore original status so the campaign isn't stuck in OPTIMIZING
+        try:
+            from app.db.database import async_session_factory as _sf
+            async with _sf() as db2:
+                result = await db2.execute(select(Advertisement).where(Advertisement.id == ad_id))
+                ad = result.scalar_one_or_none()
+                if ad and ad.status == AdStatus.OPTIMIZING:
+                    ad.status = restore_status
+                    await db2.commit()
+        except Exception:
+            pass
+
+
 @router.post("/{ad_id}/rewrite-strategy", response_model=AdvertisementOut)
 async def rewrite_strategy(
     ad_id: str,
     body: RewriteStrategyRequest,
+    background_tasks: BackgroundTasks,
     user: User = Depends(require_roles([UserRole.PROJECT_MANAGER, UserRole.ETHICS_MANAGER])),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Trigger the Curator to rewrite the entire strategy using reviewer instructions.
-    Appends a system audit review recording the action.
+    Kick off async strategy rewrite. Returns immediately with status=optimizing.
+    Frontend polls GET /{ad_id} until status returns to its previous value.
     """
     result = await db.execute(
         select(Advertisement).where(
@@ -1943,50 +2063,21 @@ async def rewrite_strategy(
     if not ad:
         raise HTTPException(status_code=404, detail="Advertisement not found")
 
-    # Load docs (same as generate-strategy)
-    company_docs_result = await db.execute(
-        select(CompanyDocument).where(CompanyDocument.company_id == user.company_id)
-    )
-    company_docs = company_docs_result.scalars().all()
-
-    protocol_docs_result = await db.execute(
-        select(AdvertisementDocument).where(
-            AdvertisementDocument.advertisement_id == ad_id,
-            AdvertisementDocument.company_id == user.company_id,
+    _rewritable = (AdStatus.STRATEGY_CREATED, AdStatus.UNDER_REVIEW, AdStatus.ETHICS_REVIEW)
+    if ad.status not in _rewritable:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Strategy can only be rewritten from STRATEGY_CREATED, UNDER_REVIEW, or ETHICS_REVIEW, not '{ad.status.value}'",
         )
+
+    background_tasks.add_task(
+        _bg_rewrite_strategy,
+        ad_id,
+        user.company_id,
+        user.id,
+        body.instructions,
+        ad.status,
     )
-    protocol_docs = protocol_docs_result.scalars().all()
-
-    all_docs = sorted(
-        list(company_docs) + list(protocol_docs),
-        key=lambda d: d.priority,
-        reverse=True,
-    )
-
-    curator = CuratorService(db, user.company_id)
-    try:
-        strategy = await curator.generate_strategy(ad, all_docs, extra_instructions=body.instructions)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error("Rewrite strategy failed for ad %s: %s", ad_id, e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Strategy rewrite failed: {e}")
-
-    ad.strategy_json = strategy
-    flag_modified(ad, "strategy_json")
-    ad.status = AdStatus.STRATEGY_CREATED
-
-    # Audit review
-    preview = body.instructions[:120] + ("…" if len(body.instructions) > 120 else "")
-    audit = Review(
-        advertisement_id=ad_id,
-        reviewer_id=user.id,
-        review_type="system",
-        status="pending",
-        comments=f"AI Re-Strategy triggered by reviewer: '{preview}'",
-    )
-    db.add(audit)
-    await db.flush()
     return ad
 
 
@@ -2022,7 +2113,7 @@ async def delete_advertisement(
     # ── 1. Delete ElevenLabs voice agent (best-effort) ────────────────────────
     # TODO: verify ElevenLabs agent deletion is confirmed end-to-end in staging
     # REVIEW: should a failed agent deletion block the overall delete or stay non-fatal?
-    bot_config = ad.bot_config or {}
+    bot_config = ad.bot_config if isinstance(ad.bot_config, dict) else {}
     if bot_config.get("elevenlabs_agent_id"):
         try:
             svc = VoicebotAgentService(db)
@@ -2081,7 +2172,7 @@ async def update_bot_config(
     if not ad:
         raise HTTPException(status_code=404, detail="Advertisement not found")
 
-    merged = dict(ad.bot_config or {})
+    merged = dict(ad.bot_config if isinstance(ad.bot_config, dict) else {})
     merged.update(body.model_dump(exclude_unset=True))
     ad.bot_config = merged
     flag_modified(ad, "bot_config")
@@ -2189,6 +2280,34 @@ async def request_voice_call(
         raise HTTPException(status_code=502, detail=f"ElevenLabs error: {e}")
 
     return {"status": "calling", "to": phone, "detail": result}
+
+
+@router.post("/{ad_id}/sync-voice-transcripts")
+async def sync_voice_transcripts(
+    ad_id: str,
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PROJECT_MANAGER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Manually pull all completed call transcripts from ElevenLabs for this campaign
+    and store them in the database, linked to participants by phone number.
+    """
+    result = await db.execute(
+        select(Advertisement).where(
+            Advertisement.id == ad_id,
+            Advertisement.company_id == user.company_id,
+        )
+    )
+    ad = result.scalar_one_or_none()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+
+    svc = VoicebotAgentService(db)
+    try:
+        summary = await svc.sync_all_transcripts(ad_id)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"ElevenLabs sync failed: {e}")
+    return summary
 
 
 @router.get("/{ad_id}/voice-session/token")
@@ -2307,8 +2426,9 @@ async def approve_optimizer_changes(
 
     deployed = []
     for review in pending:
-        action = (review.suggestions or {}).get("action")
-        field  = (review.suggestions or {}).get("field")
+        sugg_approve = review.suggestions if isinstance(review.suggestions, dict) else {}
+        action = sugg_approve.get("action")
+        field  = sugg_approve.get("field")
 
         if action == "regenerate_website":
             # Re-host the already-generated website HTML
@@ -2326,7 +2446,7 @@ async def approve_optimizer_changes(
 
         elif action == "regenerate_creative":
             # Re-upload creatives to Meta for each existing Meta ad
-            bot = ad.bot_config or {}
+            bot = ad.bot_config if isinstance(ad.bot_config, dict) else {}
             campaign_id = bot.get("meta_campaign_id")
             if campaign_id and ad.output_files:
                 from app.models.models import PlatformConnection
@@ -2346,8 +2466,23 @@ async def approve_optimizer_changes(
                 deployed.append("creatives: no Meta campaign or no output files")
 
         elif field:
-            # Content field change is already staged in strategy_json — nothing more to deploy
-            deployed.append(f"field '{field}' already staged")
+            new_val = sugg_approve.get("new_value")
+            if new_val is not None:
+                # The field was already written to strategy_json by /minor-edit when
+                # the Publisher applied the suggestion. Re-write here to ensure it
+                # persists even if the Review was created by a path that skipped it.
+                strategy = dict(ad.strategy_json if isinstance(ad.strategy_json, dict) else {})
+                keys = field.split(".")
+                node = strategy
+                for key in keys[:-1]:
+                    node = node.setdefault(key, {})
+                node[keys[-1]] = new_val
+                ad.strategy_json = strategy
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(ad, "strategy_json")
+                deployed.append(f"field '{field}' confirmed in strategy")
+            else:
+                deployed.append(f"field '{field}' — no new_value in suggestion")
 
         review.status = "approved"
 
@@ -2392,10 +2527,10 @@ async def reject_optimizer_changes(
     if not pending:
         raise HTTPException(status_code=404, detail="No pending optimizer changes found")
 
-    strategy = dict(ad.strategy_json or {})
+    strategy = dict(ad.strategy_json if isinstance(ad.strategy_json, dict) else {})
     modified = False
     for review in pending:
-        sugg = review.suggestions or {}
+        sugg = review.suggestions if isinstance(review.suggestions, dict) else {}
         field     = sugg.get("field")
         old_value = sugg.get("old_value")
         if field and old_value is not None:

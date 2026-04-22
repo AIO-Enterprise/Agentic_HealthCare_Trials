@@ -23,7 +23,7 @@
 import React, { useState, useEffect, useCallback, useRef, Component } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { PageWithSidebar, SectionCard, CampaignStatusBadge } from "../shared/Layout";
-import { adsAPI, companyAPI, surveyAPI } from "../../services/api";
+import { adsAPI, companyAPI, surveyAPI, appointmentsAPI } from "../../services/api";
 import {
   ArrowLeft, Megaphone, Globe, Image, Bot, MessageSquare,
   FileText, Check, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
@@ -31,7 +31,7 @@ import {
   MessageCircle, Send, ThumbsUp, ThumbsDown, RefreshCw, Sparkles,
   Download, Eye, Trash2, ClipboardList, Plus, X as XIcon, GripVertical,
   LayoutDashboard, ClipboardCheck, History, MapPin, Copy, PenLine,
-  Mic, PhoneCall, PhoneOff, Volume2, Wand2,
+  Mic, PhoneCall, PhoneOff, Volume2, Wand2, Phone, Pencil,
 } from "lucide-react";
 
 // ─── Campaign categories that require a questionnaire ─────────────────────────
@@ -40,8 +40,14 @@ const QUESTIONNAIRE_CATEGORIES = new Set(["recruitment", "hiring", "survey", "cl
 const QUESTIONNAIRE_KEYWORDS = ["hiring", "recruit", "survey", "clinical", "trial", "research study", "job posting", "job opening", "application", "vacancy", "vacancies", "applicant", "enroll", "enrolment", "participant", "respondent"];
 
 /** Check protocol doc titles first (strongest signal), fall back to campaign title. */
-function needsQuestionnaire(ad) {
-  return !!ad;
+function needsQuestionnaire(ad, protoDocs) {
+  if (!ad) return false;
+  if (QUESTIONNAIRE_CATEGORIES.has(ad.campaign_category)) return true;
+  const titles = [
+    ad.title || "",
+    ...(protoDocs || []).map((d) => d.title || ""),
+  ].join(" ").toLowerCase();
+  return QUESTIONNAIRE_KEYWORDS.some((kw) => titles.includes(kw));
 }
 
 // ─── Protocol document preview modal ─────────────────────────────────────────
@@ -292,7 +298,7 @@ function QuestionnaireSection({ adId, questionnaire, readOnly, showAI = true, on
     try {
       const res = await adsAPI.rewriteQuestion(adId, q, state.prompt.trim());
       const updated = res.question;
-      setQuestions((prev) => prev.map((item) => item.id === q.id ? { ...updated, id: q.id } : item));
+      setQuestions((prev) => prev.map((item) => item.id === q.id ? { ...item, ...updated, id: q.id } : item));
       setRewriteStates((prev) => ({ ...prev, [q.id]: { open: false, prompt: "", loading: false, error: null } }));
     } catch (err) {
       setRewriteStates((prev) => ({ ...prev, [q.id]: { ...prev[q.id], loading: false, error: err.message || "Rewrite failed." } }));
@@ -1082,21 +1088,23 @@ function BudgetDonut({ strategy }) {
     color: DONUT_PALETTE[i % DONUT_PALETTE.length],
   }));
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-      <div style={{ position: "relative", flexShrink: 0 }}>
-        <DonutChart slices={slices} />
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+      <div style={{ position: "relative" }}>
+        <DonutChart slices={slices} size={150} />
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
           <DollarSign size={15} style={{ color: "var(--color-accent)" }} />
         </div>
       </div>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 16px" }}>
         {slices.map((s) => (
-          <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: s.color, flexShrink: 0 }} />
-            <p style={{ flex: 1, fontSize: "0.76rem", color: "var(--color-input-text)", fontWeight: 500, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {s.label.replace(/_/g, " ")}
-            </p>
-            <p style={{ fontSize: "0.82rem", fontWeight: 800, color: s.color, flexShrink: 0, margin: 0 }}>{s.pct}%</p>
+          <div key={s.label} style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: s.color, flexShrink: 0, marginTop: 3 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ fontSize: "0.74rem", color: "var(--color-input-text)", fontWeight: 500, margin: 0, lineHeight: 1.4 }}>
+                {s.label.replace(/_/g, " ")}
+              </p>
+              <p style={{ fontSize: "0.78rem", fontWeight: 800, color: s.color, margin: 0 }}>{s.pct}%</p>
+            </div>
           </div>
         ))}
       </div>
@@ -1283,9 +1291,26 @@ function AdUploadSpecs({ specs }) {
   );
 }
 
-function StrategyViewer({ strategy, ad }) {
+function StrategyViewer({ strategy, ad, onRetry }) {
   const [showRaw, setShowRaw] = useState(false);
   if (!strategy) return null;
+
+  if (strategy.parse_error) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "32px 16px", textAlign: "center" }}>
+        <AlertCircle size={32} style={{ color: "#ef4444", opacity: 0.7 }} />
+        <p style={{ fontSize: "0.9rem", fontWeight: 600, color: "var(--color-text)" }}>AI generation failed</p>
+        <p style={{ fontSize: "0.82rem", color: "var(--color-sidebar-text)", maxWidth: 400 }}>
+          This may be a network issue or a temporary API problem. Your documents are intact — please retry.
+        </p>
+        {onRetry && (
+          <button className="btn--inline-action--ghost" onClick={onRetry} style={{ marginTop: 4 }}>
+            Retry Generation
+          </button>
+        )}
+      </div>
+    );
+  }
 
   const {
     executive_summary, target_audience, messaging, channels,
@@ -1382,7 +1407,8 @@ function StrategyViewer({ strategy, ad }) {
           <SBar label="Overview" />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 14, alignItems: "start" }}>
 
-            {/* Executive Summary */}
+            {/* Left: Executive Summary + Messaging stacked */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {executive_summary && (
               <SCard>
                 <SCardHead icon={<Sparkles size={13} />} label="Executive Summary" />
@@ -1418,7 +1444,82 @@ function StrategyViewer({ strategy, ad }) {
               </SCard>
             )}
 
-            {/* Right: Audience + Messaging stacked */}
+              {messaging && (
+                <SCard>
+                  <SCardHead icon={<MessageCircle size={13} />} label="Messaging" />
+                  <div style={{ display: "flex", flexDirection: "column" }}>
+
+                    {/* Core message — prominent quote block */}
+                    {messaging.core_message && (
+                      <div style={{ padding: "16px 18px" }}>
+                        <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-accent)", marginBottom: 8 }}>Core Message</p>
+                        <div style={{
+                          padding: "12px 14px", borderRadius: 8,
+                          backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.05)",
+                          borderLeft: "3px solid var(--color-accent)",
+                        }}>
+                          <p style={{ fontSize: "0.84rem", color: "var(--color-input-text)", lineHeight: 1.65, margin: 0, fontWeight: 500 }}>
+                            {messaging.core_message}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Tone */}
+                    {messaging.tone && (
+                      <div style={{ padding: "14px 18px", borderTop: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)" }}>
+                        <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-sidebar-text)", marginBottom: 6 }}>Tone</p>
+                        <p style={{ fontSize: "0.78rem", color: "var(--color-input-text)", lineHeight: 1.6, margin: 0 }}>{messaging.tone}</p>
+                      </div>
+                    )}
+
+                    {/* Key phrases */}
+                    {messaging.key_phrases?.length > 0 && (
+                      <div style={{ padding: "12px 16px", borderTop: "1px solid var(--color-card-border)" }}>
+                        <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-sidebar-text)", marginBottom: 7 }}>Key Phrases</p>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                          {messaging.key_phrases.map((p, i) => (
+                            <span key={i} style={{
+                              fontSize: "0.72rem", padding: "4px 10px", borderRadius: 6, fontWeight: 500,
+                              backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.07)",
+                              color: "var(--color-input-text)", border: "1px solid var(--color-card-border)",
+                            }}>{p}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* CTA */}
+                    {messaging.cta && (
+                      <div style={{ padding: "12px 16px", borderTop: "1px solid var(--color-card-border)", display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-sidebar-text)", flexShrink: 0 }}>CTA</span>
+                        <span style={{
+                          fontSize: "0.78rem", fontWeight: 700, color: "var(--color-accent)",
+                          padding: "4px 12px", borderRadius: 7,
+                          backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
+                          border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.2)",
+                        }}>{messaging.cta}</span>
+                      </div>
+                    )}
+
+                    {/* Extra messaging keys */}
+                    {Object.entries(messaging)
+                      .filter(([k]) => !["core_message", "tone", "cta", "key_phrases", "key_differentiators"].includes(k))
+                      .map(([k, v]) => (
+                        <div key={k} style={{ padding: "10px 16px", borderTop: "1px solid var(--color-card-border)" }}>
+                          <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-sidebar-text)", marginBottom: 4 }}>
+                            {k.replace(/_/g, " ")}
+                          </p>
+                          <GenericValue value={v} />
+                        </div>
+                      ))
+                    }
+                  </div>
+                </SCard>
+              )}
+            </div>
+
+            {/* Right: Audience only */}
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
               {target_audience && (
@@ -1487,79 +1588,6 @@ function StrategyViewer({ strategy, ad }) {
                 </SCard>
               )}
 
-              {messaging && (
-                <SCard>
-                  <SCardHead icon={<MessageCircle size={13} />} label="Messaging" />
-                  <div style={{ display: "flex", flexDirection: "column" }}>
-
-                    {/* Core message — prominent quote block */}
-                    {messaging.core_message && (
-                      <div style={{ padding: "16px 18px" }}>
-                        <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-accent)", marginBottom: 8 }}>Core Message</p>
-                        <div style={{
-                          padding: "12px 14px", borderRadius: 8,
-                          backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.05)",
-                          borderLeft: "3px solid var(--color-accent)",
-                        }}>
-                          <p style={{ fontSize: "0.84rem", color: "var(--color-input-text)", lineHeight: 1.65, margin: 0, fontWeight: 500 }}>
-                            {messaging.core_message}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Tone — callout block, never a pill */}
-                    {messaging.tone && (
-                      <div style={{ padding: "14px 18px", borderTop: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)" }}>
-                        <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-sidebar-text)", marginBottom: 6 }}>Tone</p>
-                        <p style={{ fontSize: "0.78rem", color: "var(--color-input-text)", lineHeight: 1.6, margin: 0 }}>{messaging.tone}</p>
-                      </div>
-                    )}
-
-                    {/* Key phrases — small chips (usually short words) */}
-                    {messaging.key_phrases?.length > 0 && (
-                      <div style={{ padding: "12px 16px", borderTop: "1px solid var(--color-card-border)" }}>
-                        <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-sidebar-text)", marginBottom: 7 }}>Key Phrases</p>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                          {messaging.key_phrases.map((p, i) => (
-                            <span key={i} style={{
-                              fontSize: "0.72rem", padding: "4px 10px", borderRadius: 6, fontWeight: 500,
-                              backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.07)",
-                              color: "var(--color-input-text)", border: "1px solid var(--color-card-border)",
-                            }}>{p}</span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* CTA — action button style */}
-                    {messaging.cta && (
-                      <div style={{ padding: "12px 16px", borderTop: "1px solid var(--color-card-border)", display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-sidebar-text)", flexShrink: 0 }}>CTA</span>
-                        <span style={{
-                          fontSize: "0.78rem", fontWeight: 700, color: "var(--color-accent)",
-                          padding: "4px 12px", borderRadius: 7,
-                          backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
-                          border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.2)",
-                        }}>{messaging.cta}</span>
-                      </div>
-                    )}
-
-                    {/* Extra messaging keys */}
-                    {Object.entries(messaging)
-                      .filter(([k]) => !["core_message", "tone", "cta", "key_phrases", "key_differentiators"].includes(k))
-                      .map(([k, v]) => (
-                        <div key={k} style={{ padding: "10px 16px", borderTop: "1px solid var(--color-card-border)" }}>
-                          <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-sidebar-text)", marginBottom: 4 }}>
-                            {k.replace(/_/g, " ")}
-                          </p>
-                          <GenericValue value={v} />
-                        </div>
-                      ))
-                    }
-                  </div>
-                </SCard>
-              )}
             </div>
           </div>
         </div>
@@ -1592,7 +1620,7 @@ function StrategyViewer({ strategy, ad }) {
       {(kpis?.length > 0 || budgetData) && (
         <div>
           <SBar label="Performance Targets" />
-          <div style={{ display: "grid", gridTemplateColumns: budgetData ? "1fr 280px" : "1fr", gap: 14, alignItems: "start" }}>
+          <div style={{ display: "grid", gridTemplateColumns: budgetData ? "1fr 360px" : "1fr", gap: 14, alignItems: "start" }}>
 
             {kpis?.length > 0 && (
               <SCard>
@@ -1622,44 +1650,46 @@ function StrategyViewer({ strategy, ad }) {
       {social_content && Object.keys(social_content).length > 0 && (
         <div>
           <SBar label="Social Content & Launch Schedule" />
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {Object.entries(social_content).map(([platform, content]) => (
               <SCard key={platform}>
                 <SCardHead icon={<Send size={13} />} label={platform} />
-                <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 14 }}>
+                <div style={{ padding: "14px 16px", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, alignItems: "start" }}>
 
                   {/* Caption */}
-                  {content.caption && (
-                    <div>
-                      <p style={{ fontSize: "0.62rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-accent)", marginBottom: 6 }}>Caption</p>
-                      <p style={{ fontSize: "0.82rem", color: "var(--color-input-text)", lineHeight: 1.6, margin: 0 }}>{content.caption}</p>
-                    </div>
-                  )}
+                  <div>
+                    <p style={{ fontSize: "0.62rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-accent)", marginBottom: 6 }}>Caption</p>
+                    {content.caption
+                      ? <p style={{ fontSize: "0.82rem", color: "var(--color-input-text)", lineHeight: 1.6, margin: 0 }}>{content.caption}</p>
+                      : <p style={{ fontSize: "0.8rem", color: "var(--color-sidebar-text)", margin: 0 }}>—</p>
+                    }
+                  </div>
 
                   {/* Hashtags */}
-                  {content.hashtags && (
-                    <div>
-                      <p style={{ fontSize: "0.62rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-accent)", marginBottom: 6 }}>Hashtags</p>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                        {content.hashtags.split(/\s+/).filter(h => h).map((h, i) => (
-                          <span key={i} style={{
-                            fontSize: "0.72rem", padding: "3px 9px", borderRadius: 999, fontWeight: 600,
-                            backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
-                            color: "var(--color-accent)",
-                          }}>{h.startsWith("#") ? h : `#${h}`}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  <div>
+                    <p style={{ fontSize: "0.62rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-accent)", marginBottom: 6 }}>Hashtags</p>
+                    {content.hashtags
+                      ? <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                          {content.hashtags.split(/\s+/).filter(h => h).map((h, i) => (
+                            <span key={i} style={{
+                              fontSize: "0.72rem", padding: "3px 9px", borderRadius: 999, fontWeight: 600,
+                              backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
+                              color: "var(--color-accent)",
+                            }}>{h.startsWith("#") ? h : `#${h}`}</span>
+                          ))}
+                        </div>
+                      : <p style={{ fontSize: "0.8rem", color: "var(--color-sidebar-text)", margin: 0 }}>—</p>
+                    }
+                  </div>
 
                   {/* Launch Schedule */}
-                  {content.launch_schedule && (
-                    <div style={{
-                      padding: "10px 13px", borderRadius: 10,
-                      backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.06)",
-                      border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.18)",
-                    }}>
-                      <p style={{ fontSize: "0.62rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-accent)", marginBottom: 7 }}>Recommended Launch Window</p>
+                  <div style={{
+                    padding: "10px 13px", borderRadius: 10,
+                    backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.06)",
+                    border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.18)",
+                  }}>
+                    <p style={{ fontSize: "0.62rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-accent)", marginBottom: 7 }}>Launch Window</p>
+                    {content.launch_schedule ? <>
                       {content.launch_schedule.recommended_window && (
                         <p style={{ fontSize: "0.84rem", fontWeight: 700, color: "var(--color-input-text)", margin: "0 0 4px" }}>{content.launch_schedule.recommended_window}</p>
                       )}
@@ -1671,8 +1701,8 @@ function StrategyViewer({ strategy, ad }) {
                       {content.launch_schedule.rationale && (
                         <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", fontStyle: "italic", margin: 0 }}>{content.launch_schedule.rationale}</p>
                       )}
-                    </div>
-                  )}
+                    </> : <p style={{ fontSize: "0.8rem", color: "var(--color-sidebar-text)", margin: 0 }}>—</p>}
+                  </div>
 
                 </div>
               </SCard>
@@ -1744,15 +1774,16 @@ function InfoRow({ label, value }) {
 
 // ─── Review submission panel ──────────────────────────────────────────────────
 function ReviewPanel({ adId, onSubmitted }) {
-  const [form, setForm]       = useState({ review_type: "strategy", status: "approved", comments: "", suggestions: "" });
+  const [form, setForm]       = useState({ review_type: "strategy", status: "approved", comments: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState(null);
 
   const submit = async () => {
-    if (!form.comments.trim()) { setError("Comments are required."); return; }
+    if (!form.comments.trim()) { setError("Comment is required."); return; }
     setLoading(true); setError(null);
     try {
       await adsAPI.createReview(adId, form);
+      setForm({ review_type: "strategy", status: "approved", comments: "" });
       onSubmitted();
     } catch (err) {
       setError(err.message || "Failed to submit review.");
@@ -1761,73 +1792,60 @@ function ReviewPanel({ adId, onSubmitted }) {
     }
   };
 
-  const labelStyle = { fontSize: "0.75rem", fontWeight: 600, color: "var(--color-sidebar-text)", display: "block", marginBottom: "6px" };
-  const selectStyle = {
-    width: "100%", padding: "8px 12px", borderRadius: "8px", fontSize: "0.85rem",
+  const fieldStyle = {
+    padding: "8px 10px", borderRadius: "8px", fontSize: "0.83rem",
     border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-input-bg)",
     color: "var(--color-input-text)", outline: "none",
   };
-  const textStyle = { ...selectStyle, resize: "vertical", minHeight: "80px", fontFamily: "inherit" };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-        <div>
-          <label style={labelStyle}>Review Type</label>
-          <select style={selectStyle} value={form.review_type} onChange={(e) => setForm((p) => ({ ...p, review_type: e.target.value }))}>
-            <option value="strategy">Strategy Review</option>
-            <option value="ethics">Ethics Review</option>
-            <option value="performance">Performance Review</option>
-          </select>
-        </div>
-        <div>
-          <label style={labelStyle}>Decision</label>
-          <select style={selectStyle} value={form.status} onChange={(e) => setForm((p) => ({ ...p, status: e.target.value }))}>
-            <option value="approved">Approve</option>
-            <option value="revision">Request Revision</option>
-            <option value="rejected">Reject</option>
-          </select>
-        </div>
-      </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <select
+          value={form.review_type}
+          onChange={(e) => setForm((p) => ({ ...p, review_type: e.target.value }))}
+          style={{ ...fieldStyle, flexShrink: 0 }}
+        >
+          <option value="strategy">Strategy</option>
+          <option value="ethics">Ethics</option>
+          <option value="performance">Performance</option>
+        </select>
 
-      <div>
-        <label style={labelStyle}>Comments *</label>
-        <textarea
-          style={textStyle}
-          placeholder="Provide your review comments..."
+        <select
+          value={form.status}
+          onChange={(e) => setForm((p) => ({ ...p, status: e.target.value }))}
+          style={{ ...fieldStyle, flexShrink: 0 }}
+        >
+          <option value="approved">Approve</option>
+          <option value="revision">Request Revision</option>
+          <option value="rejected">Reject</option>
+        </select>
+
+        <input
+          type="text"
+          placeholder="Add a comment…"
           value={form.comments}
           onChange={(e) => setForm((p) => ({ ...p, comments: e.target.value }))}
+          onKeyDown={(e) => e.key === "Enter" && submit()}
+          style={{ ...fieldStyle, flex: 1, minWidth: 180 }}
         />
-      </div>
 
-      <div>
-        <label style={labelStyle}>Suggestions (optional)</label>
-        <textarea
-          style={{ ...textStyle, minHeight: "60px" }}
-          placeholder="Any specific suggestions for improvement..."
-          value={form.suggestions}
-          onChange={(e) => setForm((p) => ({ ...p, suggestions: e.target.value }))}
-        />
-      </div>
-
-      {error && (
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 14px", borderRadius: "8px", backgroundColor: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)" }}>
-          <AlertCircle size={14} style={{ color: "#ef4444", flexShrink: 0 }} />
-          <p style={{ fontSize: "0.82rem", color: "#ef4444" }}>{error}</p>
-        </div>
-      )}
-
-      <div style={{ display: "flex", gap: "10px" }}>
         <button
           onClick={submit}
           disabled={loading}
           className="btn--accent"
-          style={{ display: "inline-flex", alignItems: "center", gap: "8px", opacity: loading ? 0.7 : 1 }}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0, opacity: loading ? 0.7 : 1 }}
         >
-          {loading ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Send size={14} />}
-          Submit Review
+          {loading ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Send size={13} />}
+          Submit
         </button>
       </div>
+
+      {error && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.78rem", color: "#ef4444" }}>
+          <AlertCircle size={13} style={{ flexShrink: 0 }} /> {error}
+        </div>
+      )}
     </div>
   );
 }
@@ -1867,41 +1885,30 @@ function ReviewCard({ review }) {
 
   return (
     <div style={{
-      padding: "14px 16px", borderRadius: "10px",
+      display: "flex", alignItems: "baseline", gap: 10,
+      padding: "10px 14px", borderRadius: 8,
       border: "1px solid var(--color-card-border)",
       backgroundColor: "var(--color-card-bg)",
     }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <span style={{
-            fontSize: "0.7rem", fontWeight: 600, padding: "2px 8px",
-            borderRadius: "999px", textTransform: "capitalize",
-            backgroundColor: statusColor + "22", color: statusColor,
-            border: `1px solid ${statusColor}44`,
-          }}>
-            {review.status}
-          </span>
-          <span style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", textTransform: "capitalize" }}>
-            {review.review_type} review
-          </span>
-        </div>
-        {review.created_at && (
-          <span style={{ fontSize: "0.7rem", color: "var(--color-sidebar-text)" }}>
-            {new Date(review.created_at).toLocaleDateString()}
-          </span>
-        )}
-      </div>
+      <span style={{
+        fontSize: "0.7rem", fontWeight: 700, padding: "2px 8px", borderRadius: 999,
+        flexShrink: 0, textTransform: "capitalize",
+        backgroundColor: statusColor + "22", color: statusColor, border: `1px solid ${statusColor}44`,
+      }}>
+        {review.status}
+      </span>
+      <span style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", flexShrink: 0, textTransform: "capitalize" }}>
+        {review.review_type}
+      </span>
       {review.comments && (
-        <p style={{ fontSize: "0.82rem", color: "var(--color-input-text)", lineHeight: 1.6 }}>
+        <span style={{ fontSize: "0.82rem", color: "var(--color-input-text)", flex: 1, lineHeight: 1.5 }}>
           {review.comments}
-        </p>
+        </span>
       )}
-      {review.suggestions && (
-        <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)", marginTop: "6px", fontStyle: "italic" }}>
-          Suggestions: {typeof review.suggestions === "object"
-            ? JSON.stringify(review.suggestions, null, 2)
-            : review.suggestions}
-        </p>
+      {review.created_at && (
+        <span style={{ fontSize: "0.68rem", color: "var(--color-sidebar-text)", flexShrink: 0, marginLeft: "auto" }}>
+          {new Date(review.created_at).toLocaleDateString()}
+        </span>
       )}
     </div>
   );
@@ -2125,16 +2132,13 @@ class DetailErrorBoundary extends Component {
   }
 }
 
-// ─── ElevenLabs voice catalogue (mirrors voicebot_agent.py) ──────────────────
+// ─── Australian ElevenLabs voice catalogue (mirrors AUSTRALIAN_VOICES in voicebot_agent.py) ──
 const VOICE_CATALOGUE = [
-  { id: "EXAVITQu4vr4xnSDxMaL", name: "Rachel",    desc: "Calm · professional · warm female" },
-  { id: "pNInz6obpgDQGcFmaJgB", name: "Adam",      desc: "Deep · authoritative male" },
-  { id: "oWAxZDx7w5VEj9dCyTzz", name: "Grace",     desc: "Warm · friendly female" },
-  { id: "TxGEqnHWrfWFTfGW9XjX", name: "Josh",      desc: "Conversational · relatable male" },
-  { id: "AZnzlk1XvdvUeBnXmlld", name: "Domi",      desc: "Strong · confident female" },
-  { id: "VR6AewLTigWG4xSOukaG", name: "Arnold",    desc: "Crisp · clear male" },
-  { id: "MF3mGyEYCl7XYWbV9V6O", name: "Elli",      desc: "Bright · energetic female" },
-  { id: "XB0fDUnXU5powFXDhCwa", name: "Charlotte", desc: "Sophisticated · composed female" },
+  { id: "XrExE9yKIg1WjnnlVkGX", name: "Matilda", desc: "Warm · friendly · Australian female" },
+  { id: "IKne3meq5aSn9XLyUdCD", name: "Charlie", desc: "Casual · approachable · Australian male" },
+  { id: "FGY2WhTYpPnrIDTdsKH5", name: "Laura",   desc: "Upbeat · energetic · Australian female" },
+  { id: "iP95p4xoKVk53GoZ742B", name: "Chris",   desc: "Professional · measured · Australian male" },
+  { id: "pFZP5JQG7iQjIQuC4Bku", name: "Aimee",  desc: "Friendly · natural · Australian female" },
 ];
 const CONV_STYLES = ["professional", "friendly", "casual", "formal", "empathetic", "energetic"];
 const VOICE_LANGUAGES = [
@@ -2401,8 +2405,8 @@ function VoicebotPanel({ ad, adId, isPublisher, isStudyCoordinator, onConfigSave
   const canEdit = isPublisher || isStudyCoordinator;
   const cfg     = ad.bot_config || {};
 
-  const [voiceId,    setVoiceId]    = useState(cfg.voice_id            || "EXAVITQu4vr4xnSDxMaL");
-  const [firstMsg,   setFirstMsg]   = useState(cfg.first_message       || "Hello! How can I help you today?");
+  const [voiceId,    setVoiceId]    = useState(cfg.voice_id            || "XrExE9yKIg1WjnnlVkGX"); // default: Matilda (Australian)
+  const [firstMsg,   setFirstMsg]   = useState(cfg.first_message       || "[takes a breath] Hi, this is Matilda with [Organization]. [short pause] We're enrolling volunteers for a clinical trial focused on [condition]. [short pause] Participation is voluntary, and, um, I can explain what's involved if you're interested.");
   const [language,   setLanguage]   = useState(cfg.language            || "en");
   const [botName,    setBotName]    = useState(cfg.bot_name            || "");
   const [convStyle,  setConvStyle]  = useState(cfg.conversation_style  || "professional");
@@ -2815,7 +2819,6 @@ const PAGE_TABS = [
   { key: "participants",  label: "Participants",  icon: Users,           alwaysShow: true  },
   { key: "review",        label: "Review",        icon: ClipboardCheck,  alwaysShow: true  },
   { key: "history",       label: "History",       icon: History,         alwaysShow: true  },
-  { key: "voicebot",      label: "Voicebot",      icon: Bot,             alwaysShow: false },
   { key: "publish",       label: "Publish",       icon: Zap,             alwaysShow: true  },
 ];
 
@@ -3144,11 +3147,38 @@ function CampaignDetailPageInner() {
   const [regenInstr,      setRegenInstr]      = useState("");
   const [regenConfirmed,  setRegenConfirmed]  = useState(false);
   const [regenOpen,       setRegenOpen]       = useState(false);
+  const [titleEditing,    setTitleEditing]    = useState(false);
+  const [titleInput,      setTitleInput]      = useState("");
+  const [titleSaving,     setTitleSaving]     = useState(false);
   const [pageTab,         setPageTab]         = useState("overview");
   const [companyLocations, setCompanyLocations] = useState([]);  // [{ country, cities }]
   const [participants,     setParticipants]     = useState([]);
   const [participantsLoading, setParticipantsLoading] = useState(false);
   const [selectedParticipant, setSelectedParticipant] = useState(null);
+  const [participantAppointments, setParticipantAppointments] = useState([]);
+  const [syncingTranscripts,  setSyncingTranscripts]  = useState(false);
+  const [syncResult,          setSyncResult]          = useState(null);
+  // Voicebot conversation history (loaded in participants tab for voicebot campaigns)
+  const [convHistory,         setConvHistory]         = useState([]);
+  const [convHistoryLoading,  setConvHistoryLoading]  = useState(false);
+  const [selectedConvHistory, setSelectedConvHistory] = useState(null);
+  const [convTranscript,      setConvTranscript]      = useState(null);
+  const [convTransLoading,    setConvTransLoading]    = useState(false);
+
+  const saveTitle = async () => {
+    const trimmed = titleInput.trim();
+    if (!trimmed || trimmed === ad.title) { setTitleEditing(false); return; }
+    setTitleSaving(true);
+    try {
+      const updated = await adsAPI.update(id, { title: trimmed });
+      setAd(updated);
+      setTitleEditing(false);
+    } catch (err) {
+      alert(err.message || "Failed to save title.");
+    } finally {
+      setTitleSaving(false);
+    }
+  };
 
   const genProgress = useGenerateProgress();
 
@@ -3160,12 +3190,26 @@ function CampaignDetailPageInner() {
 
   // Poll GET /{adId} until updated_at changes (background task committed).
   // Used after any endpoint that fires a BackgroundTask and returns immediately.
+  //
+  // Resilient to transient 5xx/network errors: during heavy generation the
+  // backend can momentarily return 503 (ALB queue / SQLite lock) — swallow
+  // those and keep polling until the deadline.
   const pollUntilUpdated = useCallback(async (adId, beforeUpdatedAt, timeoutMs = 300_000) => {
     const deadline = Date.now() + timeoutMs;
+    let transientErrors = 0;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 4000));
-      const latest = await adsAPI.get(adId);
-      if (latest.updated_at !== beforeUpdatedAt) return latest;
+      try {
+        const latest = await adsAPI.get(adId);
+        transientErrors = 0;
+        if (latest.updated_at !== beforeUpdatedAt) return latest;
+      } catch (err) {
+        const msg = String(err?.message || "");
+        const isTransient = /HTTP 5\d\d|503|502|504|Failed to fetch|NetworkError/i.test(msg);
+        if (!isTransient) throw err;
+        transientErrors += 1;
+        if (transientErrors >= 10) throw new Error("Server is unavailable — please refresh the page.");
+      }
     }
     throw new Error("Timed out waiting for generation to complete. Please refresh the page.");
   }, []);
@@ -3202,16 +3246,58 @@ function CampaignDetailPageInner() {
       .then((data) => setParticipants(data || []))
       .catch(() => setParticipants([]))
       .finally(() => setParticipantsLoading(false));
-  }, [pageTab, id]);
+    // Load voicebot conversation history alongside participants
+    if (ad?.ad_type?.includes("voicebot")) {
+      setConvHistoryLoading(true);
+      adsAPI.listVoiceConversations(id)
+        .then((r) => setConvHistory(r.conversations || []))
+        .catch(() => setConvHistory([]))
+        .finally(() => setConvHistoryLoading(false));
+    }
+  }, [pageTab, id, ad?.ad_type]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSelectConvHistory = async (conv) => {
+    if (selectedConvHistory?.conversation_id === conv.conversation_id) {
+      setSelectedConvHistory(null); return;
+    }
+    setSelectedConvHistory(conv); setConvTranscript(null); setConvTransLoading(true);
+    try { setConvTranscript(await adsAPI.getVoiceTranscript(conv.conversation_id)); } catch {}
+    setConvTransLoading(false);
+  };
+
+  const handleSyncTranscripts = async () => {
+    setSyncingTranscripts(true);
+    setSyncResult(null);
+    try {
+      const result = await surveyAPI.syncTranscripts(id);
+      setSyncResult(result);
+      // Reload participants to pick up newly linked transcripts
+      const data = await surveyAPI.list(id);
+      setParticipants(data || []);
+      if (selectedParticipant) {
+        const refreshed = (data || []).find((p) => p.id === selectedParticipant.id);
+        if (refreshed) setSelectedParticipant(refreshed);
+      }
+    } catch (err) {
+      setSyncResult({ error: err.message || "Sync failed" });
+    } finally {
+      setSyncingTranscripts(false);
+    }
+  };
 
   // ── Action handlers ──────────────────────────────────────────────────────
   const handleGenerateStrategy = async () => {
     setGenLoading(true); setGenError(null);
     try {
-      // Step 1 — strategy
+      // Step 1 — strategy (returns immediately with status=generating; poll until done)
       genProgress.start("Generating strategy…", 25000);
-      const afterStrategy = await adsAPI.generateStrategy(id);
+      const triggered = await adsAPI.generateStrategy(id);
+      setAd(triggered);
+      const afterStrategy = await pollUntilUpdated(id, triggered.updated_at, 120_000);
       setAd(afterStrategy);
+      if (afterStrategy.status === "draft") {
+        throw new Error("AI generation failed. This may be a network issue or a temporary API problem. Please try again.");
+      }
       genProgress.complete();
 
       const adTypes = afterStrategy.ad_type || [];
@@ -3224,7 +3310,7 @@ function CampaignDetailPageInner() {
         genProgress.start("Building landing page…", 120000);
         try {
           const triggeredWebsite = await adsAPI.generateWebsite(id);
-          const afterWebsite = await pollUntilUpdated(id, triggeredWebsite.updated_at);
+          const afterWebsite = await pollUntilUpdated(id, triggeredWebsite.updated_at, 600_000);
           setAd(afterWebsite);
           genProgress.complete();
         } catch (err) {
@@ -3315,10 +3401,11 @@ function CampaignDetailPageInner() {
     setWebsiteLoading(true); setWebsiteError(null);
     genProgress.start("Building landing page…", 120000);
     try {
+      const prevUrl = ad?.output_url;
       const triggered = await adsAPI.generateWebsite(id);
-      const prevUrl = triggered.output_url;
-      // Backend returns immediately; poll until the background task commits
-      const updated = await pollUntilUpdated(id, triggered.updated_at);
+      // Backend returns immediately; poll until the background task commits.
+      // Website gen is slower than creatives (Claude + image + EFS write) → 10 min.
+      const updated = await pollUntilUpdated(id, triggered.updated_at, 600_000);
       // Detect silent failure: task touched updated_at but didn't produce a URL
       if (!updated.output_url && !prevUrl) {
         throw new Error("Website generation failed on the server. Check the backend logs for the error.");
@@ -3482,9 +3569,36 @@ function CampaignDetailPageInner() {
             <p style={{ fontSize: "0.7rem", fontWeight: 600, letterSpacing: "0.1em", color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginBottom: 6 }}>
               {role?.replace(/_/g, " ")} · Campaign
             </p>
-            <h1 style={{ fontSize: "1.5rem", fontWeight: 700, color: "#fff", lineHeight: 1.3, margin: 0 }}>
-              {ad.title}
-            </h1>
+            {titleEditing ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  value={titleInput}
+                  onChange={(e) => setTitleInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveTitle(); if (e.key === "Escape") setTitleEditing(false); }}
+                  autoFocus
+                  style={{ fontSize: "1.5rem", fontWeight: 700, color: "#fff", lineHeight: 1.3, background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 8, padding: "2px 10px", outline: "none", minWidth: 0, flex: 1 }}
+                />
+                <button onClick={saveTitle} disabled={titleSaving} style={{ background: "rgba(34,197,94,0.2)", border: "1px solid rgba(34,197,94,0.4)", borderRadius: 6, cursor: "pointer", padding: "4px 10px", color: "#86efac", fontSize: "0.78rem", fontWeight: 600, flexShrink: 0 }}>
+                  {titleSaving ? "…" : "Save"}
+                </button>
+                <button onClick={() => setTitleEditing(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.4)", padding: 4, flexShrink: 0 }}>
+                  <XIcon size={16} />
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <h1 style={{ fontSize: "1.5rem", fontWeight: 700, color: "#fff", lineHeight: 1.3, margin: 0 }}>
+                  {ad.title}
+                </h1>
+                <button
+                  onClick={() => { setTitleInput(ad.title); setTitleEditing(true); }}
+                  title="Rename campaign"
+                  style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.35)", padding: 4, flexShrink: 0, display: "flex", alignItems: "center" }}
+                >
+                  <Pencil size={14} />
+                </button>
+              </div>
+            )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
             <CampaignStatusBadge status={ad.status} />
@@ -3644,6 +3758,41 @@ function CampaignDetailPageInner() {
               )}
             </div>
           </SectionCard>
+
+          {/* Voicebot Info — read-only, voicebot campaigns only */}
+          {ad.ad_type?.includes("voicebot") && (() => {
+            const cfg = ad.bot_config || {};
+            const isProvisioned = !!cfg.elevenlabs_agent_id;
+            const voiceName = VOICE_CATALOGUE.find(v => v.id === cfg.voice_id)?.name || cfg.voice_id || "—";
+            const convStyleLabel = cfg.conversation_style
+              ? cfg.conversation_style.charAt(0).toUpperCase() + cfg.conversation_style.slice(1)
+              : "—";
+            return (
+              <SectionCard title="Voice Agent" subtitle="Voicebot configuration for this campaign">
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 16 }}>
+                  {[
+                    { label: "Agent Status",        value: isProvisioned ? "Provisioned" : "Not provisioned", accent: isProvisioned },
+                    { label: "Agent Name",           value: cfg.bot_name || "—" },
+                    { label: "Voice",                value: voiceName },
+                    { label: "Conversation Style",   value: convStyleLabel },
+                    { label: "Language",             value: cfg.language || "en" },
+                    { label: "Phone Number",         value: cfg.voice_phone_number || "—" },
+                  ].map(({ label, value, accent }) => (
+                    <div key={label} style={{ padding: "12px 16px", borderRadius: 10, border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)" }}>
+                      <p style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{label}</p>
+                      <p style={{ fontSize: "0.88rem", fontWeight: 600, color: accent ? "#22c55e" : "var(--color-input-text)" }}>{value}</p>
+                    </div>
+                  ))}
+                </div>
+                {cfg.first_message && (
+                  <div style={{ marginTop: 14, padding: "10px 14px", borderRadius: 8, border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)" }}>
+                    <p style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Opening Message</p>
+                    <p style={{ fontSize: "0.85rem", color: "var(--color-input-text)", fontStyle: "italic" }}>&ldquo;{cfg.first_message}&rdquo;</p>
+                  </div>
+                )}
+              </SectionCard>
+            );
+          })()}
 
           {/* Trial Locations — study_coordinator only */}
           {role === "study_coordinator" && (
@@ -3818,7 +3967,7 @@ function CampaignDetailPageInner() {
               subtitle="Generated from company and protocol documents"
             >
               {ad.strategy_json ? (
-                <StrategyViewer strategy={ad.strategy_json} ad={ad} />
+                <StrategyViewer strategy={ad.strategy_json} ad={ad} onRetry={isStudyCoordinator ? handleGenerateStrategy : undefined} />
               ) : (
                 <p style={{ fontSize: "0.85rem", color: "var(--color-sidebar-text)" }}>Strategy is being generated…</p>
               )}
@@ -3948,30 +4097,21 @@ function CampaignDetailPageInner() {
       {/* ══ QUESTIONNAIRE tab ═════════════════════════════════════════════════ */}
       {pageTab === "questionnaire" && (
         <div>
-          {qualifies ? (
-            <>
-              <div style={{ marginBottom: 20 }}>
-                <h2 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--color-input-text)", margin: 0 }}>
-                  Eligibility Questionnaire
-                </h2>
-                <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)", marginTop: 4 }}>
-                  {ad.campaign_category ? ad.campaign_category.replace("_", " ") + " campaign" : "Detected from campaign title"} — define the questions participants will answer
-                </p>
-              </div>
-              <QuestionnaireSection
-                adId={id}
-                questionnaire={ad.questionnaire}
-                readOnly={isPublisher}
-                showAI={isStudyCoordinator}
-                onSaved={load}
-              />
-            </>
-          ) : (
-            <div style={{ textAlign: "center", padding: "48px 0" }}>
-              <ClipboardList size={32} style={{ color: "var(--color-card-border)", margin: "0 auto 12px" }} />
-              <p style={{ color: "var(--color-sidebar-text)", fontSize: "0.9rem" }}>This campaign type does not require a questionnaire.</p>
-            </div>
-          )}
+          <div style={{ marginBottom: 20 }}>
+            <h2 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--color-input-text)", margin: 0 }}>
+              Eligibility Questionnaire
+            </h2>
+            <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)", marginTop: 4 }}>
+              {ad.campaign_category ? ad.campaign_category.replace("_", " ") + " campaign" : "Campaign"} — define the questions participants will answer
+            </p>
+          </div>
+          <QuestionnaireSection
+            adId={id}
+            questionnaire={ad.questionnaire}
+            readOnly={isPublisher}
+            showAI={isStudyCoordinator}
+            onSaved={load}
+          />
         </div>
       )}
 
@@ -3980,10 +4120,7 @@ function CampaignDetailPageInner() {
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
 
           {canReview && (
-            <SectionCard
-              title="Submit Your Review"
-              subtitle="Add your human review — approve, request revisions, or flag ethical concerns"
-            >
+            <SectionCard title="Submit Review">
               <ReviewPanel adId={id} onSubmitted={handleReviewSubmitted} />
             </SectionCard>
           )}
@@ -4068,7 +4205,7 @@ function CampaignDetailPageInner() {
               subtitle={`Submitted ${new Date(selectedParticipant.created_at).toLocaleString()}`}
             >
               <button
-                onClick={() => setSelectedParticipant(null)}
+                onClick={() => { setSelectedParticipant(null); setParticipantAppointments([]); }}
                 className="btn--ghost"
                 style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.8rem", marginBottom: 20 }}
               >
@@ -4090,6 +4227,96 @@ function CampaignDetailPageInner() {
                   </div>
                 ))}
               </div>
+
+              {/* Voice call transcript */}
+              {selectedParticipant.voice_sessions?.length > 0 && (
+                <div style={{ marginBottom: 24 }}>
+                  <p style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>
+                    Voice Call Transcript
+                  </p>
+                  {selectedParticipant.voice_sessions.map((vs) => (
+                    <div key={vs.id} style={{ border: "1px solid var(--color-card-border)", borderRadius: 10, overflow: "hidden", marginBottom: 12 }}>
+                      {/* Session header */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", backgroundColor: "var(--color-page-bg)", borderBottom: vs.transcripts?.length > 0 ? "1px solid var(--color-card-border)" : "none" }}>
+                        <Phone size={14} style={{ color: "var(--color-accent)", flexShrink: 0 }} />
+                        <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--color-input-text)" }}>
+                          {vs.phone || "Unknown number"}
+                        </span>
+                        <span style={{
+                          marginLeft: "auto", fontSize: "0.72rem", fontWeight: 600, padding: "2px 8px", borderRadius: 20,
+                          backgroundColor: vs.status === "ended" ? "rgba(34,197,94,0.12)" : vs.status === "failed" ? "rgba(239,68,68,0.1)" : "rgba(245,158,11,0.12)",
+                          color: vs.status === "ended" ? "#16a34a" : vs.status === "failed" ? "#dc2626" : "#b45309",
+                        }}>
+                          {vs.status}
+                        </span>
+                        {vs.duration_seconds != null && (
+                          <span style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)" }}>
+                            {Math.floor(vs.duration_seconds / 60)}m {vs.duration_seconds % 60}s
+                          </span>
+                        )}
+                        <span style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)" }}>
+                          {new Date(vs.started_at).toLocaleString()}
+                        </span>
+                      </div>
+                      {/* Transcript turns */}
+                      {vs.transcripts?.length > 0 ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 0, maxHeight: 360, overflowY: "auto", padding: "12px 16px" }}>
+                          {[...vs.transcripts].sort((a, b) => (a.turn_index ?? 0) - (b.turn_index ?? 0)).map((turn, ti) => (
+                            <div key={ti} style={{ display: "flex", gap: 10, marginBottom: 10, alignItems: "flex-start" }}>
+                              <span style={{
+                                flexShrink: 0, width: 44, fontSize: "0.68rem", fontWeight: 700, textAlign: "right",
+                                paddingTop: 3,
+                                color: turn.speaker === "agent" ? "var(--color-accent)" : "var(--color-sidebar-text)",
+                                textTransform: "uppercase",
+                              }}>
+                                {turn.speaker === "agent" ? "Agent" : "User"}
+                              </span>
+                              <div style={{
+                                flex: 1, padding: "8px 12px", borderRadius: 8, fontSize: "0.83rem", lineHeight: 1.5,
+                                backgroundColor: turn.speaker === "agent" ? "rgba(var(--accent-rgb, 16,185,129), 0.07)" : "var(--color-page-bg)",
+                                border: "1px solid var(--color-card-border)",
+                                color: "var(--color-input-text)",
+                              }}>
+                                {turn.text}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p style={{ fontSize: "0.8rem", color: "var(--color-sidebar-text)", padding: "12px 16px" }}>
+                          No transcript available yet.
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Appointment details */}
+              {participantAppointments.length > 0 && (
+                <div style={{ marginBottom: 24 }}>
+                  <p style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>
+                    Appointments
+                  </p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {participantAppointments.map((appt) => (
+                      <div key={appt.id} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12, padding: "14px 16px", borderRadius: 10, border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)" }}>
+                        {[
+                          { label: "Date",     value: new Date(appt.slot_datetime).toLocaleDateString() },
+                          { label: "Time",     value: new Date(appt.slot_datetime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) },
+                          { label: "Duration", value: `${appt.duration_minutes} min` },
+                          { label: "Status",   value: appt.status.charAt(0).toUpperCase() + appt.status.slice(1) },
+                        ].map(({ label, value }) => (
+                          <div key={label}>
+                            <p style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>{label}</p>
+                            <p style={{ fontSize: "0.88rem", fontWeight: 600, color: appt.status === "confirmed" && label === "Status" ? "#16a34a" : appt.status === "cancelled" && label === "Status" ? "#dc2626" : "var(--color-input-text)" }}>{value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Survey answers */}
               {selectedParticipant.answers?.length > 0 && (
@@ -4121,11 +4348,40 @@ function CampaignDetailPageInner() {
               )}
             </SectionCard>
           ) : (
-            /* ── List view ── */
+            <>
+            {/* ── List view ── */}
             <SectionCard
               title="Participants"
               subtitle="People who completed the survey and submitted their details"
             >
+              {/* Sync transcripts button — only relevant for voicebot campaigns */}
+              {ad.ad_type?.includes("voicebot") && (
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+                  <button
+                    onClick={handleSyncTranscripts}
+                    disabled={syncingTranscripts}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      padding: "7px 14px", borderRadius: 8, border: "1px solid var(--color-card-border)",
+                      backgroundColor: "var(--color-card-bg)", cursor: syncingTranscripts ? "not-allowed" : "pointer",
+                      fontSize: "0.8rem", fontWeight: 600, color: "var(--color-input-text)",
+                      opacity: syncingTranscripts ? 0.6 : 1, transition: "opacity 0.15s",
+                    }}
+                  >
+                    {syncingTranscripts
+                      ? <><Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> Syncing…</>
+                      : <><RefreshCw size={13} /> Sync Transcripts</>}
+                  </button>
+                  {syncResult && !syncResult.error && (
+                    <span style={{ fontSize: "0.78rem", color: "#16a34a" }}>
+                      ✓ {syncResult.synced} synced, {syncResult.skipped} already up-to-date
+                    </span>
+                  )}
+                  {syncResult?.error && (
+                    <span style={{ fontSize: "0.78rem", color: "#dc2626" }}>{syncResult.error}</span>
+                  )}
+                </div>
+              )}
               {participantsLoading ? (
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "32px 0", justifyContent: "center" }}>
                   <Loader2 size={18} style={{ animation: "spin 1s linear infinite", color: "var(--color-accent)" }} />
@@ -4142,8 +4398,8 @@ function CampaignDetailPageInner() {
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 0, borderRadius: 10, border: "1px solid var(--color-card-border)", overflow: "hidden" }}>
                   {/* Table header */}
-                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1.5fr 1fr 40px", gap: 0, padding: "10px 16px", backgroundColor: "var(--color-page-bg)", borderBottom: "1px solid var(--color-card-border)" }}>
-                    {["Name", "Age", "Sex", "Phone", "Eligibility", ""].map((h) => (
+                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1.5fr 1fr 32px 40px", gap: 0, padding: "10px 16px", backgroundColor: "var(--color-page-bg)", borderBottom: "1px solid var(--color-card-border)" }}>
+                    {["Name", "Age", "Sex", "Phone", "Eligibility", "", ""].map((h) => (
                       <span key={h} style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{h}</span>
                     ))}
                   </div>
@@ -4151,9 +4407,15 @@ function CampaignDetailPageInner() {
                   {participants.map((p, idx) => (
                     <div
                       key={p.id}
-                      onClick={() => setSelectedParticipant(p)}
+                      onClick={() => {
+                        setSelectedParticipant(p);
+                        setParticipantAppointments([]);
+                        appointmentsAPI.list(id)
+                          .then((all) => setParticipantAppointments((all || []).filter((a) => a.survey_response_id === p.id)))
+                          .catch(() => {});
+                      }}
                       style={{
-                        display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1.5fr 1fr 40px",
+                        display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1.5fr 1fr 32px 40px",
                         gap: 0, padding: "12px 16px", cursor: "pointer",
                         borderBottom: idx < participants.length - 1 ? "1px solid var(--color-card-border)" : "none",
                         backgroundColor: "var(--color-card-bg)",
@@ -4175,6 +4437,12 @@ function CampaignDetailPageInner() {
                         {p.is_eligible === false && <AlertCircle size={12} />}
                         {p.is_eligible === true ? "Eligible" : p.is_eligible === false ? "Not Eligible" : "Unknown"}
                       </span>
+                      {/* Voice call indicator */}
+                      {p.voice_sessions?.length > 0 ? (
+                        <Phone size={13} style={{ color: "var(--color-accent)", alignSelf: "center" }} title="Has voice call transcript" />
+                      ) : (
+                        <span />
+                      )}
                       <ChevronDown size={14} style={{ color: "var(--color-sidebar-text)", transform: "rotate(-90deg)" }} />
                     </div>
                   ))}
@@ -4182,18 +4450,102 @@ function CampaignDetailPageInner() {
               )}
             </SectionCard>
           )}
-        </div>
-      )}
 
-      {/* ══ VOICEBOT tab ══════════════════════════════════════════════════════ */}
-      {pageTab === "voicebot" && ad.ad_type?.includes("voicebot") && (
-        <VoicebotPanel
-          ad={ad}
-          adId={id}
-          isPublisher={isPublisher}
-          isStudyCoordinator={isStudyCoordinator}
-          onConfigSaved={load}
-        />
+          {/* Conversation History — voicebot campaigns only */}
+            {ad.ad_type?.includes("voicebot") && (
+              <SectionCard title="Conversation History" subtitle="Past voice sessions from the voicebot">
+                {convHistoryLoading ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--color-sidebar-text)", fontSize: "0.82rem" }}>
+                    <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Loading…
+                  </div>
+                ) : convHistory.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "32px 0" }}>
+                    <PhoneCall size={28} style={{ color: "var(--color-card-border)", margin: "0 auto 10px" }} />
+                    <p style={{ color: "var(--color-sidebar-text)", fontSize: "0.85rem" }}>No conversations yet.</p>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {convHistory.map(c => (
+                      <div
+                        key={c.conversation_id}
+                        onClick={() => handleSelectConvHistory(c)}
+                        style={{
+                          padding: "12px 14px", borderRadius: 8, cursor: "pointer",
+                          border: `1px solid ${selectedConvHistory?.conversation_id === c.conversation_id ? "var(--color-accent)" : "var(--color-card-border)"}`,
+                          backgroundColor: "var(--color-card-bg)", transition: "border-color 0.15s",
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <p style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--color-input-text)", fontFamily: "ui-monospace, monospace" }}>
+                            {c.conversation_id?.slice(0, 16)}…
+                          </p>
+                          <span style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", textTransform: "capitalize" }}>{c.status}</span>
+                        </div>
+                        {c.start_time && (
+                          <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", marginTop: 2 }}>
+                            {new Date(c.start_time * 1000).toLocaleString()}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Transcript viewer */}
+                {selectedConvHistory && (
+                  <div style={{ marginTop: 16, padding: "14px 16px", borderRadius: 10, border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--color-input-text)" }}>Transcript</p>
+                      <button onClick={() => setSelectedConvHistory(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-sidebar-text)", padding: 4 }}>
+                        <XIcon size={14} />
+                      </button>
+                    </div>
+                    {convTransLoading ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--color-sidebar-text)", fontSize: "0.78rem" }}>
+                        <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> Loading transcript…
+                      </div>
+                    ) : convTranscript ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 320, overflowY: "auto" }}>
+                        {(convTranscript.transcript || []).map((turn, i) => (
+                          <div key={i} style={{ display: "flex", gap: 10 }}>
+                            <span style={{
+                              fontSize: "0.7rem", fontWeight: 700, minWidth: 40, flexShrink: 0, marginTop: 2,
+                              color: turn.role === "agent" ? "var(--color-accent)" : "var(--color-sidebar-text)",
+                            }}>
+                              {turn.role === "agent" ? "Agent" : "User"}
+                            </span>
+                            <p style={{ fontSize: "0.78rem", color: "var(--color-input-text)", lineHeight: 1.55, margin: 0 }}>
+                              {turn.message}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)" }}>No transcript data.</p>
+                    )}
+                  </div>
+                )}
+
+                <div style={{ marginTop: 12 }}>
+                  <button
+                    onClick={() => {
+                      setConvHistoryLoading(true);
+                      adsAPI.listVoiceConversations(id)
+                        .then((r) => setConvHistory(r.conversations || []))
+                        .catch(() => {})
+                        .finally(() => setConvHistoryLoading(false));
+                    }}
+                    className="btn--ghost"
+                    style={{ fontSize: "0.78rem", display: "inline-flex", alignItems: "center", gap: 6 }}
+                  >
+                    <RefreshCw size={12} /> Refresh
+                  </button>
+                </div>
+              </SectionCard>
+            )}
+            </>
+          )}
+        </div>
       )}
 
       {/* ══ PUBLISH tab ═══════════════════════════════════════════════════════ */}
@@ -4221,7 +4573,7 @@ function CampaignDetailPageInner() {
                     ? <InlineProgress progress={genProgress.progress} />
                     : !ad.output_files?.length && (
                         <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)" }}>
-                          Generates copy + images for all ad formats · uses AWS Bedrock Titan
+                          Generates copy + images for all ad formats using AI
                         </p>
                       )
                   }

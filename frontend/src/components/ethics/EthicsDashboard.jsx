@@ -205,6 +205,7 @@ function StrategyViewer({ strategy }) {
   const [openSection, setOpenSection] = useState(null);
   const toggle = (key) => setOpenSection((prev) => (prev === key ? null : key));
   if (!strategy) return <p style={{ fontSize: 13, color: "var(--color-sidebar-text)" }}>No strategy generated yet.</p>;
+  if (strategy.parse_error) return <p style={{ fontSize: 13, color: "#ef4444" }}>AI generation failed — ask the Study Coordinator to retry generation.</p>;
   const s = strategy;
   return (
     <div>
@@ -418,96 +419,211 @@ export default function EthicsDashboard() {
 
       {/* ── Optimizations tab ────────────────────────────────────────────────── */}
       {tab === "optimizations" && (
-        <div className="space-y-4">
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           {optLoading ? (
-            <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+            <div style={{ display: "flex", justifyContent: "center", padding: 64 }}>
               <Loader2 size={24} style={{ animation: "spin 1s linear infinite", color: "var(--color-accent)" }} />
             </div>
           ) : optChanges.length === 0 ? (
-            <SectionCard title="Optimizer Changes" subtitle="Pending content changes from the AI optimizer">
-              <div className="empty-state" style={{ padding: "48px 16px" }}>
-                <Sparkles size={36} className="empty-state__icon" />
-                <p className="empty-state__text">No pending optimizer changes</p>
-                <p className="empty-state__hint">When the optimizer suggests content or creative changes, they'll appear here for your review before going live.</p>
+            <div style={{
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+              padding: "72px 24px", gap: 14,
+              borderRadius: 14, border: "1px dashed var(--color-card-border)",
+              background: "var(--color-card-bg)",
+            }}>
+              <div style={{
+                width: 52, height: 52, borderRadius: "50%",
+                background: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.08)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <Sparkles size={22} style={{ color: "var(--color-accent)" }} />
               </div>
-            </SectionCard>
+              <div style={{ textAlign: "center" }}>
+                <p style={{ margin: "0 0 4px", fontSize: "0.92rem", fontWeight: 700, color: "var(--color-input-text)" }}>All clear</p>
+                <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--color-muted)", maxWidth: 320 }}>
+                  No pending optimizer changes. When the AI optimizer suggests updates, they'll appear here for your review.
+                </p>
+              </div>
+            </div>
           ) : optChanges.map((group) => {
             const acting = optActing[group.ad_id];
             const allIds = group.changes.map((c) => c.review_id);
+            const changeCount = group.changes.length;
             return (
-              <SectionCard
-                key={group.ad_id}
-                title={group.ad_title}
-                subtitle={`${group.changes.length} pending change${group.changes.length !== 1 ? "s" : ""} from AI optimizer`}
-              >
-                <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
-                  {group.changes.map((change) => {
+              <div key={group.ad_id} style={{
+                borderRadius: 14, border: "1px solid var(--color-card-border)",
+                background: "var(--color-card-bg)",
+                overflow: "hidden",
+              }}>
+                {/* ── Card header ── */}
+                <div style={{
+                  padding: "16px 20px",
+                  borderBottom: "1px solid var(--color-card-border)",
+                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                    <div style={{
+                      width: 34, height: 34, borderRadius: 9, flexShrink: 0,
+                      background: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      <Sparkles size={15} style={{ color: "var(--color-accent)" }} />
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <p style={{ margin: 0, fontSize: "0.9rem", fontWeight: 700, color: "var(--color-input-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {group.ad_title}
+                      </p>
+                      <p style={{ margin: 0, fontSize: "0.73rem", color: "var(--color-muted)" }}>
+                        {changeCount} pending change{changeCount !== 1 ? "s" : ""} from AI optimizer
+                      </p>
+                    </div>
+                  </div>
+                  <span style={{
+                    fontSize: "0.7rem", fontWeight: 700, padding: "3px 10px", borderRadius: 999,
+                    background: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
+                    color: "var(--color-sidebar-text-active)", flexShrink: 0,
+                    border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.25)",
+                  }}>
+                    {changeCount} change{changeCount !== 1 ? "s" : ""}
+                  </span>
+                </div>
+
+                {/* ── Change list ── */}
+                <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 10 }}>
+                  {group.changes.map((change, idx) => {
                     const sugg = change.suggestions || {};
-                    const isField   = !!sugg.field;
+                    const isField    = !!sugg.field;
                     const isCreative = sugg.action === "regenerate_creative";
                     const isWebsite  = sugg.action === "regenerate_website";
-                    const FIELD_ICON = { caption: Globe, content_note: Globe, ad_caption: Image, hashtags: Hash };
-                    const FieldIcon = FIELD_ICON[sugg.field] || Type;
+
+                    const typeLabel = isCreative ? "Creative" : isWebsite ? "Website" : (sugg.field || "Change").replace(/_/g, " ");
+                    const accentBorder = "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.2)";
+                    const accentBg     = "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.04)";
+
                     return (
                       <div key={change.review_id} style={{
-                        borderRadius: 10, border: "1px solid var(--color-card-border)",
-                        borderLeft: "3px solid #f59e0b", backgroundColor: "rgba(245,158,11,0.03)",
-                        padding: "12px 14px",
+                        borderRadius: 10,
+                        border: "1px solid var(--color-card-border)",
+                        background: "var(--color-page-bg)",
+                        overflow: "hidden",
                       }}>
-                        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                          <span style={{ fontSize: "0.65rem", fontWeight: 800, padding: "2px 7px", borderRadius: 999, backgroundColor: "rgba(245,158,11,0.12)", color: "#b45309", flexShrink: 0, marginTop: 2 }}>
-                            {isCreative ? "CREATIVE" : isWebsite ? "WEBSITE" : (sugg.field || "CHANGE").toUpperCase().replace("_", " ")}
+                        {/* Change header row */}
+                        <div style={{
+                          display: "flex", alignItems: "center", gap: 8,
+                          padding: "10px 14px",
+                          borderBottom: isField && sugg.new_value ? "1px solid var(--color-card-border)" : "none",
+                        }}>
+                          <div style={{
+                            width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
+                            background: "var(--color-accent)",
+                          }} />
+                          <span style={{
+                            fontSize: "0.66rem", fontWeight: 800, textTransform: "uppercase",
+                            letterSpacing: "0.04em", color: "var(--color-sidebar-text-active)", flexShrink: 0,
+                          }}>
+                            {typeLabel}
                           </span>
-                          <div style={{ flex: 1 }}>
-                            <p style={{ fontSize: "0.84rem", fontWeight: 600, color: "var(--color-input-text)", marginBottom: 4 }}>
-                              {change.comments}
-                            </p>
-                            {isField && sugg.new_value && (
-                              <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
-                                {sugg.old_value && (
-                                  <div style={{ padding: "6px 10px", borderRadius: 6, backgroundColor: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.2)" }}>
-                                    <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", marginBottom: 2, fontWeight: 600 }}>BEFORE</p>
-                                    <p style={{ fontSize: "0.8rem", color: "#b91c1c" }}>{sugg.old_value}</p>
-                                  </div>
-                                )}
-                                <div style={{ padding: "6px 10px", borderRadius: 6, backgroundColor: "rgba(34,197,94,0.07)", border: "1px solid rgba(34,197,94,0.2)" }}>
-                                  <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", marginBottom: 2, fontWeight: 600 }}>AFTER</p>
-                                  <p style={{ fontSize: "0.8rem", color: "#15803d" }}>{sugg.new_value}</p>
-                                </div>
+                          <p style={{
+                            margin: 0, fontSize: "0.82rem", fontWeight: 500,
+                            color: "var(--color-input-text)", flex: 1,
+                          }}>
+                            {change.comments}
+                          </p>
+                        </div>
+
+                        {/* Diff block — field changes only */}
+                        {isField && sugg.new_value && (
+                          <div style={{ display: "grid", gridTemplateColumns: sugg.old_value ? "1fr 1fr" : "1fr" }}>
+                            {sugg.old_value && (
+                              <div style={{
+                                padding: "10px 14px",
+                                borderRight: "1px solid var(--color-card-border)",
+                                background: "rgba(239,68,68,0.04)",
+                              }}>
+                                <p style={{
+                                  margin: "0 0 5px", fontSize: "0.65rem", fontWeight: 700,
+                                  textTransform: "uppercase", letterSpacing: "0.05em",
+                                  color: "var(--color-muted)", display: "flex", alignItems: "center", gap: 4,
+                                }}>
+                                  <span>−</span> Before
+                                </p>
+                                <p style={{ margin: 0, fontSize: "0.82rem", color: "var(--color-sidebar-text)", lineHeight: 1.55, textDecoration: "line-through", opacity: 0.7 }}>
+                                  {sugg.old_value}
+                                </p>
                               </div>
                             )}
-                            {(isCreative || isWebsite) && (
-                              <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)", marginTop: 4 }}>
-                                {isCreative ? "New creative images have been generated and will be uploaded to Meta on approval." : "New website HTML has been generated and will go live on approval."}
+                            <div style={{
+                              padding: "10px 14px",
+                              background: accentBg,
+                            }}>
+                              <p style={{
+                                margin: "0 0 5px", fontSize: "0.65rem", fontWeight: 700,
+                                textTransform: "uppercase", letterSpacing: "0.05em",
+                                color: "var(--color-sidebar-text-active)", display: "flex", alignItems: "center", gap: 4,
+                              }}>
+                                <span>+</span> After
                               </p>
-                            )}
+                              <p style={{ margin: 0, fontSize: "0.82rem", color: "var(--color-input-text)", lineHeight: 1.55 }}>
+                                {sugg.new_value}
+                              </p>
+                            </div>
                           </div>
-                        </div>
+                        )}
+
+                        {/* Action note for creative/website changes */}
+                        {(isCreative || isWebsite) && (
+                          <div style={{ padding: "8px 14px", display: "flex", alignItems: "center", gap: 6 }}>
+                            <AlertCircle size={12} style={{ color: "var(--color-muted)", flexShrink: 0 }} />
+                            <p style={{ margin: 0, fontSize: "0.76rem", color: "var(--color-muted)" }}>
+                              {isCreative
+                                ? "New creative images will be uploaded to Meta on approval."
+                                : "New website HTML will go live on approval."}
+                            </p>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
                 </div>
-                <div style={{ display: "flex", gap: 10 }}>
+
+                {/* ── Action footer ── */}
+                <div style={{
+                  padding: "14px 20px",
+                  borderTop: "1px solid var(--color-card-border)",
+                  background: "var(--color-page-bg)",
+                  display: "flex", alignItems: "center", gap: 10,
+                }}>
                   <button
                     onClick={() => handleOptApprove(group.ad_id, allIds)}
                     disabled={!!acting}
                     className="btn--accent"
-                    style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                    style={{
+                      flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                      opacity: acting && acting !== "approving" ? 0.45 : 1,
+                      cursor: acting ? "not-allowed" : "pointer",
+                    }}
                   >
-                    {acting === "approving" ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <CheckCircle2 size={13} />}
-                    {acting === "approving" ? "Approving…" : "Approve & Deploy All"}
+                    {acting === "approving"
+                      ? <><Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> Deploying…</>
+                      : <><CheckCircle2 size={14} /> Approve &amp; Deploy All</>}
                   </button>
                   <button
                     onClick={() => handleOptReject(group.ad_id, allIds)}
                     disabled={!!acting}
                     className="btn--ghost"
-                    style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, color: "#ef4444", borderColor: "#ef444440" }}
+                    style={{
+                      flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                      opacity: acting && acting !== "rejecting" ? 0.45 : 1,
+                      cursor: acting ? "not-allowed" : "pointer",
+                      color: "var(--color-muted)",
+                    }}
                   >
-                    {acting === "rejecting" ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <X size={13} />}
-                    {acting === "rejecting" ? "Rejecting…" : "Reject All & Revert"}
+                    {acting === "rejecting"
+                      ? <><Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> Reverting…</>
+                      : <><X size={13} /> Reject &amp; Revert All</>}
                   </button>
                 </div>
-              </SectionCard>
+              </div>
             );
           })}
         </div>

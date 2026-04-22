@@ -1,6 +1,6 @@
 # Deployment Guide — AIO Health Care Agentic
 
-Live URL: **https://clinadspro.com**
+Live URL: **https://d2s8k22yb5c8me.cloudfront.net**
 CloudFront URL: **https://d2s8k22yb5c8me.cloudfront.net**
 AWS Region: `us-east-1`
 Account ID: `809411919411`

@@ -15,7 +15,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { PageWithSidebar, SectionCard, MetricSummaryCard, CampaignStatusBadge } from "../shared/Layout";
 import { adsAPI, analyticsAPI, platformConnectionsAPI, surveyAPI } from "../../services/api";
 import {
-  Send, Globe, Image, BarChart3, Sparkles, Copy,
+  Send, Globe, Image, BarChart3, Sparkles, Copy, Server,
   CheckCircle, Rocket, ChevronDown, ChevronUp, Zap, X, ImageOff,
   Share2, UploadCloud, ExternalLink, Download, Eye, AlertCircle,
   CheckCircle2, Loader2, Mic, PhoneCall, PhoneOff, Volume2, Radio, MessageSquare,
@@ -316,9 +316,9 @@ export default function PublisherDashboard() {
         const existing = p[fk] || {};
         const seeds = {};
 
-        // Seed destination_url from hosted landing page
+        // Seed destination_url from hosted landing page — must be absolute for Meta
         if (!existing.destination_url && ad?.hosted_url) {
-          seeds.destination_url = ad.hosted_url;
+          seeds.destination_url = `${window.location.origin}${ad.hosted_url}`;
         }
 
         // AI-suggested daily budget: use strategy daily budget, or spread total over 30 days
@@ -346,35 +346,10 @@ export default function PublisherDashboard() {
           seeds.currency = "USD";
         }
 
-        // AI-suggest browser add-on from campaign signals
+        // Default browser add-on to None; user can switch to WhatsApp/Phone manually
         if (!existing.addon_type) {
-          const strat      = ad?.strategy_json || {};
-          const botConfig  = ad?.bot_config    || {};
-          const adTypes    = ad?.ad_type        || [];
-          const ctaLc      = (strat.cta || "").toLowerCase();
-          // E.164 number stored when the ElevenLabs agent was provisioned
-          const voicePhone = botConfig.voice_phone_number || "";
-
-          let suggestedAddon = "";
-          let suggestedPhone = "";
-
-          if (strat.whatsapp_number || ctaLc.includes("whatsapp")) {
-            suggestedAddon = "whatsapp";
-            suggestedPhone = strat.whatsapp_number || strat.phone_number || "";
-          } else if (
-            adTypes.includes("voicebot") ||
-            adTypes.includes("phone") ||
-            ctaLc.includes("call") ||
-            voicePhone
-          ) {
-            // Phone call → voicebot. Number is resolved server-side from bot_config.
-            suggestedAddon = "phone";
-            // Only seed a phone number for WhatsApp (phone call uses voicebot number automatically)
-          }
-
-          seeds.addon_type          = suggestedAddon;
-          seeds._addon_ai_suggested = !!suggestedAddon;
-          if (suggestedPhone) seeds.addon_phone = suggestedPhone;
+          seeds.addon_type          = "";
+          seeds._addon_ai_suggested = false;
         }
 
         return Object.keys(seeds).length
@@ -539,12 +514,10 @@ export default function PublisherDashboard() {
       {activeTab === "deploy" && (
         <DeployTab
           ads={ads}
-          deployExpanded={deployExpanded}
-          deployForms={deployForms}
-          deployStatus={deployStatus}
-          onSelectPlatform={handleDeploySelect}
-          onUpdateForm={updateDeployForm}
-          onDeploy={handleDeploy}
+          hostingId={hostingId}
+          hostError={hostError}
+          onHost={handleHostPage}
+          onAdUpdated={(updated) => setAds((p) => p.map((a) => (a.id === updated.id ? updated : a)))}
         />
       )}
 
@@ -678,7 +651,7 @@ function getDeployChecklist(ad) {
       label:    "Voice agent provisioned",
       done:     !!ad.bot_config?.elevenlabs_agent_id,
       detail:   ad.bot_config?.elevenlabs_agent_id
-        ? `Agent ID: ${ad.bot_config.elevenlabs_agent_id}`
+        ? "Voice agent provisioned"
         : "Not yet provisioned",
       note:     null,
       action:   !ad.bot_config?.elevenlabs_agent_id
@@ -1067,16 +1040,13 @@ function PublishedCampaignPanel({ ad, onPreviewAd, onUpdateAd }) {
   );
 }
 
-// ElevenLabs voice options (popular voices from the voice library)
+// Australian ElevenLabs voice profiles — matches AUSTRALIAN_VOICES in voicebot_agent.py
 const ELEVEN_VOICES = [
-  { id: "EXAVITQu4vr4xnSDxMaL", label: "Rachel — Calm, professional (F)" },
-  { id: "pNInz6obpgDQGcFmaJgB", label: "Adam — Deep, authoritative (M)" },
-  { id: "oWAxZDx7w5VEj9dCyTzz", label: "Grace — Warm, friendly (F)" },
-  { id: "TxGEqnHWrfWFTfGW9XjX", label: "Josh — Conversational (M)" },
-  { id: "AZnzlk1XvdvUeBnXmlld", label: "Domi — Strong, confident (F)" },
-  { id: "VR6AewLTigWG4xSOukaG", label: "Arnold — Crisp, clear (M)" },
-  { id: "MF3mGyEYCl7XYWbV9V6O", label: "Elli — Bright, energetic (F)" },
-  { id: "XB0fDUnXU5powFXDhCwa", label: "Charlotte — Sophisticated (F)" },
+  { id: "XrExE9yKIg1WjnnlVkGX", label: "Matilda — Warm, friendly (F) · Australian" },
+  { id: "IKne3meq5aSn9XLyUdCD", label: "Charlie — Casual, approachable (M) · Australian" },
+  { id: "FGY2WhTYpPnrIDTdsKH5", label: "Laura — Upbeat, energetic (F) · Australian" },
+  { id: "iP95p4xoKVk53GoZ742B", label: "Chris — Professional, measured (M) · Australian" },
+  { id: "pFZP5JQG7iQjIQuC4Bku", label: "Aimee — Friendly, natural (F) · Australian" },
 ];
 
 function VoicebotConfig({ ad }) {
@@ -1084,8 +1054,8 @@ function VoicebotConfig({ ad }) {
 
   const [form, setForm] = useState({
     bot_name:      existing.bot_name      || "Assistant",
-    voice_id:      existing.voice_id      || "EXAVITQu4vr4xnSDxMaL",
-    first_message: existing.first_message || "Hi! How can I help you today?",
+    voice_id:      existing.voice_id      || "XrExE9yKIg1WjnnlVkGX",  // default: Matilda (Australian)
+    first_message: existing.first_message || "[takes a breath] Hi, this is Matilda with [Organization]. [short pause] We're enrolling volunteers for a clinical trial focused on [condition]. [short pause] Participation is voluntary, and, um, I can explain what's involved if you're interested.",
     // conversation_style, language, compliance_notes are set by AI recommendation — not exposed to the user
   });
 
@@ -1225,7 +1195,7 @@ function VoicebotConfig({ ad }) {
       };
     } catch (err) {
       cleanupCall(); setCallStatus("idle");
-      if (err.message?.includes("No ElevenLabs agent provisioned") || err.message?.includes("No voice agent provisioned")) {
+      if (err.message?.includes("No ElevenLabs agent provisioned") || err.message?.includes("No voice agent provisioned") || err.message?.includes("agent provisioned")) {
         setAgentStatus({ provisioned: false });
         setCallError("Agent is not provisioned — click Provision Agent to set it up.");
       } else {
@@ -1403,7 +1373,7 @@ function VoicebotConfig({ ad }) {
             value={form.first_message}
             onChange={(e) => setForm((p) => ({ ...p, first_message: e.target.value }))}
             className="field-input"
-            placeholder="Hi! How can I help you today?"
+            placeholder="Hi, this is [Name] with [Organization]. We're enrolling volunteers..."
           />
         </div>
       </div>
@@ -1588,7 +1558,7 @@ function VoicebotConfig({ ad }) {
 }
 
 // ─── Deploy Tab ───────────────────────────────────────────────────────────────
-function DeployTab({ ads, deployExpanded, deployForms, deployStatus, onSelectPlatform, onUpdateForm, onDeploy }) {
+function DeployTab({ ads, hostingId, hostError, onHost }) {
   const deployable = ads.filter(
     (a) => (a.status === "approved" || a.status === "published") && hasType(a, "website")
   );
@@ -1608,79 +1578,89 @@ function DeployTab({ ads, deployExpanded, deployForms, deployStatus, onSelectPla
 
   return (
     <div className="space-y-4">
-      {deployable.map((ad) => (
-        <SectionCard key={ad.id} title={ad.title} subtitle={`${typeLabel(ad)} · ${ad.status}`}>
+      {deployable.map((ad) => {
+        const isHosting  = hostingId === ad.id;
+        const hostedUrl  = ad.hosted_url ? `${window.location.origin}${ad.hosted_url}` : null;
 
-          {/* Website readiness row */}
-          {ad.output_url ? (
-            <div style={{
-              display: "flex", alignItems: "center", gap: "12px",
-              padding: "12px 16px", borderRadius: "10px", marginBottom: "20px",
-              border: "1px solid var(--color-card-border)",
-              backgroundColor: "var(--color-card-bg)",
-            }}>
-              <Globe size={15} style={{ color: "var(--color-accent)", flexShrink: 0 }} />
-              <p style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--color-input-text)", flex: 1 }}>
-                Landing page ready
-              </p>
-              <a href={adsAPI.websitePreviewUrl(ad.id)} target="_blank" rel="noreferrer" className="btn--inline-action--ghost">
-                <Eye size={11} /> Preview
-              </a>
-              <a href={adsAPI.websiteDownloadUrl(ad.id)} className="btn--inline-action--ghost">
-                <Download size={11} /> Download
-              </a>
-            </div>
-          ) : (
-            <div style={{
-              display: "flex", alignItems: "center", gap: "12px",
-              padding: "12px 16px", borderRadius: "10px", marginBottom: "20px",
-              border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)",
-            }}>
-              <AlertCircle size={14} style={{ color: "var(--color-sidebar-text)", flexShrink: 0 }} />
-              <p style={{ fontSize: "0.82rem", color: "var(--color-sidebar-text)", flex: 1 }}>
-                Website not yet generated — the Study Coordinator generates assets during campaign creation
-              </p>
-            </div>
-          )}
+        return (
+          <SectionCard key={ad.id} title={ad.title} subtitle={`${typeLabel(ad)} · ${ad.status}`}>
+            {ad.output_url ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
 
-          {/* Platform tiles */}
-          <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)", marginBottom: "10px" }}>
-            Publish on
-          </p>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "10px", marginBottom: "16px" }}>
-            {DEPLOY_PLATFORMS.map((platform) => {
-              const isSelected = deployExpanded?.adId === ad.id && deployExpanded?.platformId === platform.id;
-              const status     = deployStatus[`${ad.id}_${platform.id}`];
-              return (
-                <DeployPlatformTile
-                  key={platform.id}
-                  platform={platform}
-                  selected={isSelected}
-                  status={status}
-                  disabled={!ad.output_url}
-                  onClick={() => onSelectPlatform(ad.id, platform.id)}
-                />
-              );
-            })}
-          </div>
+                {/* Landing page row */}
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 12,
+                  padding: "12px 16px", borderRadius: 10,
+                  border: "1px solid var(--color-card-border)",
+                  backgroundColor: "var(--color-card-bg)",
+                }}>
+                  <Server size={15} style={{ color: "var(--color-accent)", flexShrink: 0 }} />
+                  <p style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--color-input-text)", flex: 1 }}>
+                    Landing page ready
+                  </p>
+                  <button
+                    onClick={() => onHost(ad.id)}
+                    disabled={isHosting}
+                    className="btn--inline-action--accent"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 5, opacity: isHosting ? 0.7 : 1 }}
+                  >
+                    {isHosting
+                      ? <Loader2 size={11} style={{ animation: "spin 0.75s linear infinite" }} />
+                      : <Server size={11} />}
+                    {isHosting ? "Hosting…" : ad.hosted_url ? "Re-host" : "Host"}
+                  </button>
+                  <a href={adsAPI.websiteDownloadUrl(ad.id)} className="btn--inline-action--ghost">
+                    <Download size={11} /> Download
+                  </a>
+                </div>
 
-          {/* Inline config form */}
-          {deployExpanded?.adId === ad.id && (() => {
-            const platform = DEPLOY_PLATFORMS.find((p) => p.id === deployExpanded.platformId);
-            if (!platform) return null;
-            const fk = `${ad.id}_${platform.id}`;
-            return (
-              <DeployConfigForm
-                platform={platform}
-                formData={deployForms[fk] || {}}
-                status={deployStatus[fk]}
-                onChange={(key, val) => onUpdateForm(ad.id, platform.id, key, val)}
-                onDeploy={() => onDeploy(ad.id, platform)}
-              />
-            );
-          })()}
-        </SectionCard>
-      ))}
+                {/* Hosted URL bar */}
+                {hostedUrl && (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "10px 14px", borderRadius: 8,
+                    backgroundColor: "rgba(16,185,129,0.06)",
+                    border: "1px solid rgba(16,185,129,0.25)",
+                  }}>
+                    <Globe size={13} style={{ color: "var(--color-accent)", flexShrink: 0 }} />
+                    <a
+                      href={hostedUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ fontSize: "0.8rem", color: "var(--color-accent)", flex: 1, wordBreak: "break-all", textDecoration: "none", fontWeight: 500 }}
+                    >
+                      {hostedUrl}
+                    </a>
+                    <button
+                      onClick={() => navigator.clipboard.writeText(hostedUrl)}
+                      title="Copy URL"
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-sidebar-text)", padding: 2, flexShrink: 0 }}
+                    >
+                      <Copy size={12} />
+                    </button>
+                  </div>
+                )}
+
+                {/* Host error */}
+                {hostError?.[ad.id] && (
+                  <p style={{ fontSize: "0.78rem", color: "#ef4444" }}>{hostError[ad.id]}</p>
+                )}
+              </div>
+            ) : (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 12,
+                padding: "12px 16px", borderRadius: 10,
+                border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)",
+              }}>
+                <AlertCircle size={14} style={{ color: "var(--color-sidebar-text)", flexShrink: 0 }} />
+                <p style={{ fontSize: "0.82rem", color: "var(--color-sidebar-text)", flex: 1 }}>
+                  Website not yet generated — ask the Study Coordinator to generate the campaign website
+                </p>
+              </div>
+            )}
+          </SectionCard>
+        );
+      })}
     </div>
   );
 }
@@ -2588,9 +2568,14 @@ function aspectRatioForFormat(format = "") {
 // ─── Manage Ads Tab ───────────────────────────────────────────────────────────
 const DAY_OPTIONS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 
-function ManageTab({ ads, metaConnection }) {
+function ManageTab({ ads: initialAds, metaConnection }) {
+  const [ads, setAds] = useState(initialAds);
+  // Keep in sync when parent reloads
+  useEffect(() => { setAds(initialAds); }, [initialAds]);
+
   // Campaigns that have been distributed to Meta
-  const metaCampaigns = ads.filter((a) => a.bot_config?.meta_campaign_id);
+  // Show all published ads — even those that lost their campaign_id so the user can restore it
+  const metaCampaigns = ads.filter((a) => a.status === "published" || a.bot_config?.meta_campaign_id);
 
   const [metaAds,       setMetaAds]       = useState({});   // { adId: { loading, ads, error } }
   const [toggling,      setToggling]      = useState({});   // { metaAdId: true/false }
@@ -2604,6 +2589,28 @@ function ManageTab({ ads, metaConnection }) {
   const [pauseWindows,   setPauseWindows]   = useState([]);
   const [pauseSaving,    setPauseSaving]    = useState(false);
   const [savedSchedules, setSavedSchedules] = useState({}); // { adId: windows[] } — local cache after save
+
+  // ── Campaign ID override ────────────────────────────────────────────────────
+  const [campaignIdEdit,   setCampaignIdEdit]   = useState(null);  // adId being edited
+  const [campaignIdInput,  setCampaignIdInput]  = useState("");
+  const [campaignIdSaving, setCampaignIdSaving] = useState(false);
+
+  const openCampaignIdEdit = (ad) => {
+    setCampaignIdEdit(ad.id);
+    setCampaignIdInput(ad.bot_config?.meta_campaign_id || "");
+  };
+
+  const saveCampaignId = async (adId) => {
+    const trimmed = campaignIdInput.trim();
+    if (!trimmed) { alert("Campaign ID cannot be empty."); return; }
+    setCampaignIdSaving(true);
+    try {
+      const updated = await adsAPI.updateBotConfig(adId, { meta_campaign_id: trimmed });
+      setAds((prev) => prev.map((a) => a.id === adId ? updated : a));
+      setCampaignIdEdit(null);
+    } catch (err) { alert(err.message); }
+    finally { setCampaignIdSaving(false); }
+  };
 
   const loadMetaAds = async (adId) => {
     setMetaAds((p) => ({ ...p, [adId]: { loading: true, ads: [], error: null } }));
@@ -2655,7 +2662,7 @@ function ManageTab({ ads, metaConnection }) {
     setEditForm({
       headline:   ld.name || "",
       body:       ld.message || "",
-      cta_type:   ld.call_to_action?.type || "LEARN_MORE",
+      cta_type:   ld.call_to_action?.type || "BOOK_NOW",
       link_url:   ld.link || "",
       image_hash: metaAd.creative?.image_hash || "",
     });
@@ -2759,11 +2766,11 @@ function ManageTab({ ads, metaConnection }) {
 
   if (metaCampaigns.length === 0) {
     return (
-      <SectionCard title="Manage Meta Ads" subtitle="No campaigns distributed to Meta yet">
+      <SectionCard title="Manage Meta Ads" subtitle="No published campaigns found">
         <div className="flex flex-col items-center py-12 gap-3">
           <TrendingUp size={36} style={{ color: "var(--color-sidebar-text)", opacity: 0.4 }} />
           <p className="text-sm" style={{ color: "var(--color-sidebar-text)" }}>
-            Upload a campaign to Meta from the Upload Ads tab to manage its ads here.
+            Publish a campaign first, then upload it to Meta from the Upload Ads tab.
           </p>
         </div>
       </SectionCard>
@@ -2781,7 +2788,7 @@ function ManageTab({ ads, metaConnection }) {
           <SectionCard
             key={ad.id}
             title={ad.title}
-            subtitle={`Campaign ID: ${campaignId} · ${state?.ads?.length ?? "–"} ads`}
+            subtitle={campaignId ? `Campaign ID: ${campaignId} · ${state?.ads?.length ?? "–"} ads` : "No campaign ID — click Edit Campaign ID to set one"}
           >
             {/* Action bar */}
             <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center" }}>
@@ -2821,7 +2828,45 @@ function ManageTab({ ads, metaConnection }) {
               >
                 <ExternalLink size={12} /> Ads Manager
               </a>
+              <button
+                className="btn--inline-action--ghost"
+                onClick={() => openCampaignIdEdit(ad)}
+                style={{ borderColor: "#6366f144", color: "#6366f1" }}
+              >
+                <Pencil size={12} /> Edit Campaign ID
+              </button>
             </div>
+
+            {/* Campaign ID inline editor */}
+            {campaignIdEdit === ad.id && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, padding: "10px 12px", background: "var(--color-input-bg)", borderRadius: 8, border: "1px solid #6366f144" }}>
+                <span style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)", whiteSpace: "nowrap" }}>Meta Campaign ID:</span>
+                <input
+                  value={campaignIdInput}
+                  onChange={(e) => setCampaignIdInput(e.target.value)}
+                  placeholder="e.g. 120210123456789"
+                  style={{ flex: 1, padding: "5px 10px", borderRadius: 6, fontSize: "0.82rem", border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-input-bg)", color: "var(--color-input-text)", outline: "none", fontFamily: "inherit" }}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveCampaignId(ad.id); if (e.key === "Escape") setCampaignIdEdit(null); }}
+                  autoFocus
+                />
+                <button
+                  className="btn--inline-action--ghost"
+                  onClick={() => saveCampaignId(ad.id)}
+                  disabled={campaignIdSaving}
+                  style={{ borderColor: "#22c55e44", color: "#22c55e", whiteSpace: "nowrap" }}
+                >
+                  {campaignIdSaving ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <CheckCircle2 size={12} />}
+                  Save
+                </button>
+                <button
+                  className="btn--inline-action--ghost"
+                  onClick={() => setCampaignIdEdit(null)}
+                  style={{ padding: "4px 8px" }}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            )}
 
             {/* Active pause schedule windows */}
             {(() => {
@@ -3161,7 +3206,7 @@ function ManageTab({ ads, metaConnection }) {
                 <label style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--color-sidebar-text)", display: "block", marginBottom: 5 }}>CTA Type</label>
                 <select
                   style={inputStyle}
-                  value={editForm.cta_type || "LEARN_MORE"}
+                  value={editForm.cta_type || "BOOK_NOW"}
                   onChange={(e) => setEditForm((p) => ({ ...p, cta_type: e.target.value }))}
                 >
                   {["LEARN_MORE","SIGN_UP","CONTACT_US","GET_STARTED","APPLY_NOW","BOOK_NOW"].map((c) => (
@@ -3623,7 +3668,14 @@ function PublisherAnalytics({ ads, suggestions, setSuggestions, optimizing, setO
     if (!activeAd) return;
     setOptimizing(true);
     try {
-      const result = await analyticsAPI.triggerOptimize(activeAd.id);
+      const { log_id } = await analyticsAPI.triggerOptimize(activeAd.id);
+      let result;
+      for (let i = 0; i < 60; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        result = await analyticsAPI.getOptimizeStatus(activeAd.id, log_id);
+        if (result.status === "done" || result.status === "failed") break;
+      }
+      if (result?.status === "failed") throw new Error("Optimizer failed — please try again.");
       setSuggestions(result);
     } catch (err) { alert(err.message); }
     finally { setOptimizing(false); }
@@ -3698,6 +3750,11 @@ function PublisherAnalytics({ ads, suggestions, setSuggestions, optimizing, setO
 
     if (m.includes("spend") || m.includes("amount spent"))
       return `$${totals.spend.toFixed(2)}`;
+
+    if (m.includes("conversion rate"))
+      return totals.clicks > 0
+        ? `${Math.min((totals.conversions / totals.clicks) * 100, 100).toFixed(2)}%`
+        : "–";
 
     if (m.includes("conversion") || m.includes("enrolled participant") || m.includes("total enrolled") || m.includes("enrolled"))
       return totals.conversions.toLocaleString();
@@ -3932,7 +3989,7 @@ function PublisherAnalytics({ ads, suggestions, setSuggestions, optimizing, setO
 
         // Meta-derived chatbot conversion rate: (conversations / clicks) × 100
         const chatbotConvRate = totalConvs > 0 && totals.clicks > 0
-          ? ((totalConvs / totals.clicks) * 100).toFixed(2) + "%"
+          ? `${Math.min((totalConvs / totals.clicks) * 100, 100).toFixed(2)}%`
           : "–";
 
         const metricCards = [
@@ -3980,15 +4037,15 @@ function PublisherAnalytics({ ads, suggestions, setSuggestions, optimizing, setO
           },
           {
             label: "Website Visitors",
-            value: hasSynced ? totals.reach.toLocaleString() : "–",
-            sub: "Unique reach from Meta",
+            value: hasSynced ? totals.clicks.toLocaleString() : "–",
+            sub: "Ad clicks redirected to website",
             color: "#22c55e",
             note: !hasSynced ? "Sync Meta to populate" : null,
           },
           {
             label: "Cost Per Lead",
-            value: hasSynced && totals.conversions > 0 ? `$${(totals.spend / totals.conversions).toFixed(2)}` : "–",
-            sub: "Spend ÷ conversions",
+            value: hasSynced && totalSurveys > 0 ? `$${(totals.spend / totalSurveys).toFixed(2)}` : "–",
+            sub: "Spend ÷ pre-screener submissions",
             color: "#f59e0b",
             note: !hasSynced ? "Sync Meta to populate" : null,
           },

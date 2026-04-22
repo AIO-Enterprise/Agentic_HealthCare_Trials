@@ -98,6 +98,9 @@ class LogoUploadResponse(BaseModel):
 
 # ─── User Schemas ─────────────────────────────────────────────────────────────
 
+class UserUpdateSelf(BaseModel):
+    full_name: str = Field(..., min_length=2, max_length=256)
+
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8)
@@ -172,6 +175,7 @@ class BrandKitCreate(BaseModel):
     dos: Optional[str] = None
     donts: Optional[str] = None
     preset_name: Optional[str] = None
+    pdf_path: Optional[str] = None
 
 class BrandKitOut(BaseModel):
     id: str
@@ -202,6 +206,7 @@ class BrandKitUpdate(BaseModel):
     dos: Optional[str] = None
     donts: Optional[str] = None
     preset_name: Optional[str] = None
+    pdf_path: Optional[str] = None
 
 
 # ─── Advertisement Schemas ────────────────────────────────────────────────────
@@ -361,7 +366,8 @@ class AnalyticsOut(BaseModel):
 
 class OptimizerSuggestion(BaseModel):
     advertisement_id: str
-    suggestions: Dict[str, Any]
+    status: str = "done"
+    suggestions: Optional[Dict[str, Any]] = None
     context: Optional[Dict[str, Any]] = None
 
 class OptimizerDecision(BaseModel):
@@ -404,6 +410,7 @@ class BotConfigUpdate(BaseModel):
     allowed_origins: Optional[List[str]] = None   # restrict chat to these origins
     additional_params: Optional[Dict[str, Any]] = None
     pause_schedule: Optional[Any] = None
+    meta_campaign_id: Optional[str] = None
 
 
 # ─── Reviewer Action Schemas ──────────────────────────────────────────────────
@@ -437,6 +444,28 @@ class SurveyResponseCreate(BaseModel):
     answers:   List[SurveyAnswerItem] = []
     is_eligible: Optional[bool] = None
 
+class CallTranscriptOut(BaseModel):
+    speaker:      str
+    text:         str
+    turn_index:   Optional[int] = None
+    timestamp_ms: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+class VoiceSessionOut(BaseModel):
+    id:                         str
+    elevenlabs_conversation_id: Optional[str] = None
+    status:                     str
+    phone:                      Optional[str] = None
+    started_at:                 datetime
+    ended_at:                   Optional[datetime] = None
+    duration_seconds:           Optional[int] = None
+    transcripts:                List[CallTranscriptOut] = []
+
+    class Config:
+        from_attributes = True
+
 class SurveyResponseOut(BaseModel):
     id:               str
     advertisement_id: str
@@ -447,6 +476,41 @@ class SurveyResponseOut(BaseModel):
     answers:          List[Dict[str, Any]]
     is_eligible:      Optional[bool] = None
     created_at:       datetime
+    voice_sessions:   List[VoiceSessionOut] = []
+
+    class Config:
+        from_attributes = True
+
+# ─── Appointment ──────────────────────────────────────────────────────────────
+
+class SlotInfo(BaseModel):
+    time:      str   # "HH:MM"
+    label:     str   # "9:00 AM"
+    available: bool
+
+class AvailableSlotsResponse(BaseModel):
+    date:             str
+    duration_minutes: int
+    slots:            List[SlotInfo]
+
+class AppointmentCreate(BaseModel):
+    patient_name:       str
+    patient_phone:      str
+    slot_datetime:      datetime
+    survey_response_id: Optional[str] = None
+    notes:              Optional[str] = None
+
+class AppointmentOut(BaseModel):
+    id:                 str
+    advertisement_id:   str
+    survey_response_id: Optional[str] = None
+    patient_name:       str
+    patient_phone:      str
+    slot_datetime:      datetime
+    duration_minutes:   int
+    status:             str
+    notes:              Optional[str] = None
+    created_at:         datetime
 
     class Config:
         from_attributes = True

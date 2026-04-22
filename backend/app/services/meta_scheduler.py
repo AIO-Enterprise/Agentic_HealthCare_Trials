@@ -138,7 +138,7 @@ async def _get_meta_conn(session, company_id: str):
 
 
 async def _process_ad(session, ad: Advertisement, now: datetime) -> None:
-    bot_config  = ad.bot_config or {}
+    bot_config  = ad.bot_config if isinstance(ad.bot_config, dict) else {}
     sched       = bot_config.get("pause_schedule")
     campaign_id = bot_config.get("meta_campaign_id") or ""
     adset_id    = bot_config.get("meta_adset_id") or ""
@@ -207,7 +207,7 @@ async def _next_sleep(now: datetime) -> float:
         async with async_session_factory() as session:
             result = await session.execute(select(Advertisement))
             for ad in result.scalars().all():
-                bc    = ad.bot_config or {}
+                bc    = ad.bot_config if isinstance(ad.bot_config, dict) else {}
                 sched = bc.get("pause_schedule")
                 if not sched:
                     continue

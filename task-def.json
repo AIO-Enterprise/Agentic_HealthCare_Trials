@@ -55,7 +55,7 @@
   "containerDefinitions": [
     {
       "name": "backend",
-      "image": "809411919411.dkr.ecr.us-east-1.amazonaws.com/agentic_healthcare/backend:v10",
+      "image": "809411919411.dkr.ecr.us-east-1.amazonaws.com/agentic_healthcare/backend:v11",
       "portMappings": [{"containerPort": 8000, "protocol": "tcp"}],
       "essential": true,
       "mountPoints": [
@@ -74,14 +74,18 @@
         {"name": "DATABASE_URL",       "value": "sqlite+aiosqlite:////db/marketing_platform.db"},
         {"name": "S3_UPLOAD_BUCKET",           "value": "agentic-healthcare-uploads-809411919411-us-east-1-an"},
         {"name": "OPENAI_IMAGE_MODEL",        "value": "gpt-image-1"},
-        {"name": "META_OAUTH_REDIRECT_URI",   "value": "https://clinadspro.com/api/platform-connections/meta/callback"}
+        {"name": "META_OAUTH_REDIRECT_URI",   "value": "https://d2s8k22yb5c8me.cloudfront.net/api/platform-connections/meta/callback"},
+        {"name": "APP_PUBLIC_URL",            "value": "https://d2s8k22yb5c8me.cloudfront.net"},
+        {"name": "ELEVENLABS_TTS_MODEL",      "value": "eleven_multilingual_v3"},
+        {"name": "AZURE_OPENAI_API_VERSION",  "value": "2025-04-01-preview"},
+        {"name": "AZURE_CHAT_DEPLOYMENT",     "value": "gpt-5"}
       ],
       "secrets": [
         {"name": "SECRET_KEY",             "valueFrom": "arn:aws:secretsmanager:us-east-1:809411919411:secret:healthcare/prod/app-JcG6Qx:SECRET_KEY::"},
         {"name": "ELEVENLABS_API_KEY",     "valueFrom": "arn:aws:secretsmanager:us-east-1:809411919411:secret:healthcare/prod/app-JcG6Qx:ELEVENLABS_API_KEY::"},
         {"name": "AZURE_OPENAI_API_KEY",   "valueFrom": "arn:aws:secretsmanager:us-east-1:809411919411:secret:healthcare/prod/app-JcG6Qx:AZURE_OPENAI_API_KEY::"},
         {"name": "AZURE_OPENAI_ENDPOINT",  "valueFrom": "arn:aws:secretsmanager:us-east-1:809411919411:secret:healthcare/prod/app-JcG6Qx:AZURE_OPENAI_ENDPOINT::"},
-        {"name": "META_APP_ID",            "valueFrom": "arn:aws:secretsmanager:us-east-1:809411919411:secret:healthcare/prod/app-JcG6Qx:META_APP_ID::"},
+{"name": "META_APP_ID",            "valueFrom": "arn:aws:secretsmanager:us-east-1:809411919411:secret:healthcare/prod/app-JcG6Qx:META_APP_ID::"},
         {"name": "META_APP_SECRET",        "valueFrom": "arn:aws:secretsmanager:us-east-1:809411919411:secret:healthcare/prod/app-JcG6Qx:META_APP_SECRET::"}
       ],
       "logConfiguration": {

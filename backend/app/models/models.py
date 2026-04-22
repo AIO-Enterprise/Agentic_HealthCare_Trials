@@ -241,6 +241,7 @@ class Advertisement(Base):
     voice_sessions     = relationship("VoiceSession", back_populates="advertisement", cascade="all, delete-orphan")
     chat_sessions      = relationship("ChatSession", back_populates="advertisement", cascade="all, delete-orphan")
     survey_responses   = relationship("SurveyResponse", back_populates="advertisement", cascade="all, delete-orphan")
+    appointments       = relationship("Appointment", back_populates="advertisement", cascade="all, delete-orphan")
 
 
 # ─── Password Reset OTP ───────────────────────────────────────────────────────
@@ -314,7 +315,8 @@ class OptimizerLog(Base):
 
     id               = Column(String, primary_key=True, default=_uuid)
     advertisement_id = Column(String, ForeignKey("advertisements.id"), nullable=False)
-    suggestions      = Column(JSON, nullable=False)
+    status           = Column(String(16), default="pending")   # pending | done | failed
+    suggestions      = Column(JSON, nullable=True)
     context          = Column(JSON, nullable=True)
     human_decision   = Column(String(32), nullable=True)
     applied_changes  = Column(JSON, nullable=True)
@@ -356,9 +358,14 @@ class VoiceSession(Base):
     ended_at                    = Column(DateTime, nullable=True)
     duration_seconds            = Column(Integer, nullable=True)
     caller_metadata             = Column(JSON, nullable=True)            # browser, location, etc.
+    # Outbound call tracking — set when our system dials the participant
+    phone                       = Column(String(32), nullable=True)      # E.164 number we called
+    survey_response_id          = Column(String, ForeignKey("survey_responses.id"), nullable=True)
 
-    advertisement = relationship("Advertisement", back_populates="voice_sessions")
-    transcripts   = relationship("CallTranscript", back_populates="session", cascade="all, delete-orphan")
+    advertisement   = relationship("Advertisement", back_populates="voice_sessions")
+    transcripts     = relationship("CallTranscript", back_populates="session", cascade="all, delete-orphan")
+    survey_response = relationship("SurveyResponse", back_populates="voice_sessions", foreign_keys=[survey_response_id])
+    booking         = relationship("Appointment", back_populates="voice_session", uselist=False)
 
 
 # ─── Platform Connections ─────────────────────────────────────────────────────
@@ -448,4 +455,28 @@ class SurveyResponse(Base):
     is_eligible      = Column(Boolean, nullable=True)        # overall eligibility result
     created_at       = Column(DateTime, default=_now)
 
-    advertisement = relationship("Advertisement", back_populates="survey_responses")
+    advertisement  = relationship("Advertisement", back_populates="survey_responses")
+    voice_sessions = relationship("VoiceSession", back_populates="survey_response", foreign_keys="[VoiceSession.survey_response_id]")
+    appointments   = relationship("Appointment", back_populates="survey_response")
+
+
+# ─── Appointment ──────────────────────────────────────────────────────────────
+
+class Appointment(Base):
+    __tablename__ = "appointments"
+
+    id                 = Column(String, primary_key=True, default=_uuid)
+    advertisement_id   = Column(String, ForeignKey("advertisements.id"), nullable=False)
+    survey_response_id = Column(String, ForeignKey("survey_responses.id"), nullable=True)
+    voice_session_id   = Column(String, ForeignKey("voice_sessions.id"), nullable=True)
+    patient_name       = Column(String(256), nullable=False)
+    patient_phone      = Column(String(32), nullable=False)
+    slot_datetime      = Column(DateTime, nullable=False)   # naive UTC
+    duration_minutes   = Column(Integer, nullable=False, default=30)
+    status             = Column(String(32), default="confirmed")  # confirmed | cancelled
+    notes              = Column(Text, nullable=True)
+    created_at         = Column(DateTime, default=_now)
+
+    advertisement   = relationship("Advertisement", back_populates="appointments")
+    survey_response = relationship("SurveyResponse", back_populates="appointments")
+    voice_session   = relationship("VoiceSession", back_populates="booking")

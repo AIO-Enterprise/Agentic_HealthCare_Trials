@@ -35,12 +35,12 @@ import ReactDOM from "react-dom";
 import { Navigate, useLocation, Link } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { useGeneration, GEN_STEPS } from "../../contexts/GenerationContext";
-import { authAPI } from "../../services/api";
+import { authAPI, usersAPI } from "../../services/api";
 import {
   LayoutDashboard, Users, FileText, BarChart3,
   LogOut, Shield, Eye, Megaphone, Globe, Bot,
-  Rocket, Share2, Sparkles, X, CheckCircle2, Activity, Menu,
-  KeyRound, Mail, Lock, ChevronRight, Loader2, AlertCircle,
+  Rocket, Share2, Sparkles, X, CheckCircle2, Menu,
+  KeyRound, Mail, Lock, ChevronRight, Loader2, AlertCircle, Pencil, Check,
 } from "lucide-react";
 
 // ─── RoleGuardedRoute ─────────────────────────────────────────────────────────
@@ -103,7 +103,7 @@ const SIDEBAR_LINKS_BY_ROLE = {
 
 // ─── Profile Modal ────────────────────────────────────────────────────────────
 function ProfileModal({ onClose }) {
-  const { fullName, email, role } = useAuth();
+  const { fullName, email, role, updateFullName } = useAuth();
   // view: "profile" | "sending" | "verify" | "success"
   const [view,        setView]        = useState("profile");
   const [code,        setCode]        = useState("");
@@ -112,6 +112,33 @@ function ProfileModal({ onClose }) {
   const [error,       setError]       = useState("");
   const [loading,     setLoading]     = useState(false);
   const codeRef = useRef(null);
+
+  // Inline name editing
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput,   setNameInput]   = useState(fullName || "");
+  const [nameSaving,  setNameSaving]  = useState(false);
+  const [nameError,   setNameError]   = useState("");
+  const nameInputRef = useRef(null);
+
+  useEffect(() => {
+    if (editingName) setTimeout(() => nameInputRef.current?.focus(), 30);
+  }, [editingName]);
+
+  const handleSaveName = async () => {
+    const trimmed = nameInput.trim();
+    if (trimmed.length < 2) { setNameError("Name must be at least 2 characters."); return; }
+    setNameSaving(true);
+    setNameError("");
+    try {
+      await usersAPI.updateMe({ full_name: trimmed });
+      updateFullName(trimmed);
+      setEditingName(false);
+    } catch (err) {
+      setNameError(err.message || "Failed to save name.");
+    } finally {
+      setNameSaving(false);
+    }
+  };
 
   useEffect(() => {
     if (view === "verify") setTimeout(() => codeRef.current?.focus(), 50);
@@ -202,8 +229,50 @@ function ProfileModal({ onClose }) {
                 }}>
                   {initials}
                 </div>
-                <div>
-                  <p style={{ margin: 0, fontSize: "0.9rem", fontWeight: 700, color: "var(--color-input-text)" }}>{fullName || "User"}</p>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {editingName ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <input
+                        ref={nameInputRef}
+                        value={nameInput}
+                        onChange={(e) => setNameInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") handleSaveName(); if (e.key === "Escape") { setEditingName(false); setNameInput(fullName || ""); setNameError(""); } }}
+                        className="field-input"
+                        style={{ fontSize: "0.85rem", padding: "4px 8px", flex: 1, minWidth: 0 }}
+                        maxLength={100}
+                        disabled={nameSaving}
+                      />
+                      <button
+                        onClick={handleSaveName}
+                        disabled={nameSaving}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-sidebar-text-active)", padding: 2, display: "flex", flexShrink: 0 }}
+                        title="Save"
+                      >
+                        {nameSaving ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Check size={14} />}
+                      </button>
+                      <button
+                        onClick={() => { setEditingName(false); setNameInput(fullName || ""); setNameError(""); }}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-muted)", padding: 2, display: "flex", flexShrink: 0 }}
+                        title="Cancel"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <p style={{ margin: 0, fontSize: "0.9rem", fontWeight: 700, color: "var(--color-input-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fullName || "User"}</p>
+                      <button
+                        onClick={() => { setNameInput(fullName || ""); setEditingName(true); }}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-muted)", padding: 2, display: "flex", flexShrink: 0 }}
+                        title="Edit name"
+                      >
+                        <Pencil size={12} />
+                      </button>
+                    </div>
+                  )}
+                  {nameError && (
+                    <p style={{ margin: "3px 0 0", fontSize: "0.7rem", color: "#f87171" }}>{nameError}</p>
+                  )}
                   <p style={{ margin: "2px 0 0", fontSize: "0.75rem", color: "var(--color-muted)", textTransform: "capitalize" }}>{role?.replace(/_/g, " ")}</p>
                 </div>
               </div>
@@ -387,27 +456,7 @@ export function AppSidebar({ isOpen, onClose }) {
     <aside className={`sidebar${isOpen ? " sidebar--open" : ""}`}>
       {/* Brand / logo strip */}
       <div className="sidebar__brand">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="sidebar__logo-mark">
-              <Activity size={14} color="white" strokeWidth={2.5} />
-            </div>
-            <span className="sidebar__app-name">ClinAds Pro</span>
-          </div>
-          {/* Close button — visible only on mobile */}
-          {onClose && (
-            <button
-              onClick={onClose}
-              style={{
-                background: "none", border: "none", cursor: "pointer",
-                color: "#9ca3af", padding: "4px", display: "flex", borderRadius: "6px",
-              }}
-              aria-label="Close menu"
-            >
-              <X size={16} />
-            </button>
-          )}
-        </div>
+        <img src="/alt1_trails_logo.svg" alt="ALT Trials" style={{ height: "42px", width: "auto", display: "block" }} />
         <p className="sidebar__role-label">{role?.replace("_", " ")}</p>
       </div>
 
@@ -709,7 +758,7 @@ export function PageWithSidebar({ children }) {
           >
             <Menu size={20} />
           </button>
-          <span style={{ color: "#ffffff", fontWeight: 600, fontSize: "0.9rem" }}>ClinAds Pro</span>
+          <img src="/alt1_trails_logo.svg" alt="ALT Trials" style={{ height: "44px", width: "auto" }} />
         </div>
 
         <div className="page-main-content" style={{ flex: 1, padding: "2rem" }}>

@@ -76,6 +76,14 @@ class Settings(BaseSettings):
     ELEVENLABS_API_KEY: Optional[str] = None
     ELEVENLABS_VOICE_ID: str = "EXAVITQu4vr4xnSDxMaL"  # Default: Rachel
     ELEVENLABS_PHONE_NUMBER_ID: Optional[str] = None  # Phone number ID for outbound calls
+    # TTS model for conversational AI agents — eleven_v3 is the latest model
+    # with enhanced support for audio expression tags and natural disfluencies
+    ELEVENLABS_TTS_MODEL: str = "eleven_v3_conversational"
+    ELEVENLABS_WEBHOOK_SECRET: Optional[str] = None   # HMAC secret set on the ElevenLabs agent
+
+    # Public-facing base URL — used to register post-call webhook with ElevenLabs.
+    # Example: https://api.yourdomain.com  (no trailing slash)
+    APP_PUBLIC_URL: Optional[str] = None
 
     # Email (SMTP) — leave blank to log OTP to console instead of sending
     SMTP_HOST: str = ""

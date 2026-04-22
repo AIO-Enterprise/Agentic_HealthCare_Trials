@@ -68,7 +68,9 @@ class MetaAdsService:
         )
         body = resp.json()
         if "error" in body:
-            raise RuntimeError(f"Code exchange failed: {body['error'].get('message')}")
+            err = body.get("error", {})
+            msg = err.get("message") if isinstance(err, dict) else str(err)
+            raise RuntimeError(f"Code exchange failed: {msg}")
         return body["access_token"]
 
     @staticmethod
@@ -90,8 +92,10 @@ class MetaAdsService:
         )
         body = resp.json()
         if "error" in body:
-            raise RuntimeError(f"Long-lived token exchange failed: {body['error'].get('message')}")
-        return body["access_token"], int(body.get("expires_in", 5183944))  # default ~60 days
+            err = body.get("error", {})
+            msg = err.get("message") if isinstance(err, dict) else str(err)
+            raise RuntimeError(f"Long-lived token exchange failed: {msg}")
+        return body["access_token"], int(body.get("expires_in") or 5183944)  # default ~60 days
 
     @staticmethod
     def fetch_me(access_token: str) -> dict:
@@ -153,7 +157,9 @@ class MetaAdsService:
         )
         biz_body = biz_resp.json()
         for biz in biz_body.get("data", []):
-            for p in (biz.get("owned_pages") or {}).get("data", []):
+            op = biz.get("owned_pages")
+            pages_data = op.get("data", []) if isinstance(op, dict) else []
+            for p in pages_data:
                 pages.setdefault(p["id"], p)
 
         return list(pages.values())
@@ -225,7 +231,9 @@ class MetaAdsService:
             {"bytes": image_b64},
         )
         # Response: {"images": {"<filename>": {"hash": "...", ...}}}
-        for _fname, img_data in result.get("images", {}).items():
+        imgs = result.get("images") or {}
+        images_dict = imgs if isinstance(imgs, dict) else {}
+        for _fname, img_data in images_dict.items():
             return img_data["hash"]
         raise RuntimeError("Meta did not return an image hash")
 
@@ -301,7 +309,8 @@ class MetaAdsService:
                 page_id,
                 params={"fields": "instagram_accounts{id}"},
             )
-            accounts = (body.get("instagram_accounts") or {}).get("data", [])
+            ig = body.get("instagram_accounts")
+            accounts = ig.get("data", []) if isinstance(ig, dict) else []
             if accounts:
                 return accounts[0]["id"]
         except Exception as exc:
@@ -506,9 +515,14 @@ class MetaAdsService:
         display_url: Optional[str] = None,
         addon_type: Optional[str] = None,
         addon_phone: Optional[str] = None,
+        existing_campaign_id: Optional[str] = None,
     ) -> dict:
         """
         Full pipeline: images → campaign → ad set → creatives → ads.
+
+        If existing_campaign_id is provided, reuses that campaign (preserving analytics
+        history) but always creates a fresh adset — archived adsets cannot contain
+        new active ads on Meta.
 
         All ads start ACTIVE and begin serving immediately.
         Returns campaign_id, adset_id, ad_ids, and a direct link to the Ads Manager.
@@ -525,9 +539,13 @@ class MetaAdsService:
         # Minimum enforced at 100 cents ($1.00).
         daily_budget_cents = max(100, int(daily_budget_usd * 100))
 
-        logger.info("STEP 1: Creating campaign...")
-        campaign_id = await self.create_campaign(campaign_name)
-        logger.info("STEP 1 OK: campaign %s", campaign_id)
+        if existing_campaign_id:
+            logger.info("STEP 1: Reusing existing campaign %s", existing_campaign_id)
+            campaign_id = existing_campaign_id
+        else:
+            logger.info("STEP 1: Creating campaign...")
+            campaign_id = await self.create_campaign(campaign_name)
+            logger.info("STEP 1 OK: campaign %s", campaign_id)
 
         # Fetch the Instagram actor connected to this page (best-effort — no hard failure).
         # Pre-filling this eliminates the manual Instagram-selection prompt in Ads Manager.
@@ -558,8 +576,8 @@ class MetaAdsService:
             image_hash = await self.upload_image(disk_path)
             logger.info("STEP 3 OK: image_hash %s", image_hash)
 
-            cta_text = (creative.get("cta") or "Learn More").upper().strip()
-            cta_type = CTA_MAP.get(cta_text, "LEARN_MORE")
+            cta_text = (creative.get("cta") or "Book Now").upper().strip()
+            cta_type = CTA_MAP.get(cta_text, "BOOK_NOW")
 
             logger.info("STEP 4: Creating creative %d...", idx + 1)
             creative_id = await self.create_creative(

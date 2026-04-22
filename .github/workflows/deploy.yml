@@ -1,8 +1,8 @@
-name: Deploy to AWS ECS (clinadspro.com)
+name: Deploy to AWS ECS (d2s8k22yb5c8me.cloudfront.net)
 
 # Triggers on push to either branch:
-#   dev  → deploys to production (clinadspro.com)
-#   main → deploys to production (clinadspro.com)
+#   dev  → deploys to production (d2s8k22yb5c8me.cloudfront.net)
+#   main → deploys to production (d2s8k22yb5c8me.cloudfront.net)
 # Remove the branch you don't want triggering deploys.
 on:
   push:
@@ -155,19 +155,50 @@ jobs:
             --region $AWS_REGION
 
       # ── 11. Wait for rollout to complete ───────────────────────────────────
-      # Times out after ~10 min (ECS default). Fails the job if tasks crash.
+      # aws ecs wait services-stable polls every 15 s with a hard ceiling of
+      # 40 attempts (10 min). On large clusters or slow EFS mounts the first
+      # waiter can time out even though the service is healthy 30 s later.
+      # We retry once more so total coverage is ~20 min before giving up.
+      # CloudFront invalidation runs regardless (continue-on-error: true).
       - name: Wait for ECS services to stabilize
+        id: ecs_wait
+        continue-on-error: true
         run: |
-          echo "Waiting for rollout... (may take 3–8 minutes)"
-          aws ecs wait services-stable \
-            --cluster $ECS_CLUSTER \
-            --services $BACKEND_SERVICE $FRONTEND_SERVICE \
-            --region $AWS_REGION
+          echo "Waiting for rollout... (may take 3–15 minutes)"
+          if ! aws ecs wait services-stable \
+               --cluster $ECS_CLUSTER \
+               --services $BACKEND_SERVICE $FRONTEND_SERVICE \
+               --region $AWS_REGION; then
+            echo "First waiter timed out — sleeping 60 s then retrying once..."
+            sleep 60
+            aws ecs wait services-stable \
+              --cluster $ECS_CLUSTER \
+              --services $BACKEND_SERVICE $FRONTEND_SERVICE \
+              --region $AWS_REGION
+          fi
 
-      # ── 12. Summary ────────────────────────────────────────────────────────
+      # ── 12. Invalidate CloudFront cache ────────────────────────────────────
+      # CF_DISTRIBUTION_ID secret must be set in GitHub → Settings → Secrets.
+      # To find it: AWS Console → CloudFront → Distributions → copy the ID
+      # column (format: E1XXXXXXXXXX).  The domain d2s8k22yb5c8me.cloudfront.net
+      # is the domain name, not the ID.
+      - name: Invalidate CloudFront cache
+        run: |
+          DIST_ID="${{ secrets.CF_DISTRIBUTION_ID }}"
+          if [ -n "$DIST_ID" ]; then
+            aws cloudfront create-invalidation \
+              --distribution-id "$DIST_ID" \
+              --paths "/*" \
+              --region us-east-1
+            echo "CloudFront invalidation created for $DIST_ID"
+          else
+            echo "⚠️  CF_DISTRIBUTION_ID secret not set — skipping invalidation"
+          fi
+
+      # ── 13. Summary ────────────────────────────────────────────────────────
       - name: Deployment summary
         run: |
           echo "✅ Deploy complete"
           echo "   Backend  → $BACKEND_TASK_FAMILY:$BACKEND_REVISION  (image: $IMAGE_TAG)"
           echo "   Frontend → $FRONTEND_TASK_FAMILY:$FRONTEND_REVISION  (image: $IMAGE_TAG)"
-          echo "   Live URL → https://clinadspro.com"
+          echo "   Live URL → https://d2s8k22yb5c8me.cloudfront.net/"

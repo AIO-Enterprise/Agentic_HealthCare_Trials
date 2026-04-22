@@ -180,6 +180,60 @@ export const onboardingAPI = {
 
   uploadDocument: async (docType, title, content, file) => {
     const token = localStorage.getItem("token");
+
+    const readErr = async (res, fallbackLabel) => {
+      const raw = await res.text().catch(() => "");
+      let detail = "";
+      try { detail = (JSON.parse(raw) || {}).detail || ""; } catch { /* not JSON */ }
+      const snippet = raw && !detail ? ` — ${raw.slice(0, 200)}` : "";
+      return detail || `${fallbackLabel} (HTTP ${res.status}${snippet})`;
+    };
+
+    const postJson = async (path, body) => {
+      const res = await fetch(`${API_BASE}${path}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await readErr(res, "Document upload failed"));
+      return res.json();
+    };
+
+    // When a file is present, use the WAF-safe S3 presign flow on the shared
+    // /documents endpoints (whitelisted for pre-onboarded users). Fall back to
+    // the multipart /onboarding/documents route when S3 is not configured, or
+    // when the caller only has a content blob (no file).
+    if (file) {
+      const contentType = file.type || "application/octet-stream";
+      const presign = await postJson("/documents/presign", {
+        doc_type:     docType,
+        title,
+        filename:     file.name,
+        content_type: contentType,
+        file_size:    file.size,
+      });
+
+      if (presign.method === "s3") {
+        const s3Res = await fetch(presign.upload_url, {
+          method:  "PUT",
+          headers: { "Content-Type": presign.content_type || contentType },
+          body:    file,
+        });
+        if (s3Res.ok) {
+          return postJson("/documents/confirm", {
+            s3_key:       presign.s3_key,
+            doc_type:     docType,
+            title,
+            filename:     file.name,
+            content_type: presign.content_type || contentType,
+          });
+        }
+        const errBody = await s3Res.text().catch(() => "");
+        console.warn("S3 upload failed, falling back to direct:", s3Res.status, errBody);
+      }
+    }
+
+    // Direct multipart fallback — used when no file, or S3 not configured.
     const formData = new FormData();
     formData.append("doc_type", docType);
     formData.append("title", title);
@@ -191,10 +245,7 @@ export const onboardingAPI = {
       headers: { Authorization: `Bearer ${token}` },
       body: formData,
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || `Document upload failed (HTTP ${res.status})`);
-    }
+    if (!res.ok) throw new Error(await readErr(res, "Document upload failed"));
     return res.json();
   },
 
@@ -234,6 +285,38 @@ export const brandKitAPI = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+
+  uploadPdf: (file) => {
+    const form = new FormData();
+    form.append("file", file);
+    const token = localStorage.getItem("token");
+    return fetch(`${API_BASE}/brand-kit/upload-pdf`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    }).then(async (res) => {
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      return res.json(); // { pdf_path }
+    });
+  },
+
+  extractPdf: (file) => {
+    const form = new FormData();
+    form.append("file", file);
+    return fetch(`${API_BASE}/brand-kit/extract-pdf`, {
+      method: "POST",
+      body: form,
+    }).then(async (res) => {
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      return res.json();
+    });
+  },
 };
 
 // ─── M2: Users ───────────────────────────────────────────────────────────────
@@ -249,6 +332,12 @@ export const usersAPI = {
 
   deactivate: (userId) =>
     request(`/users/${userId}/deactivate`, { method: "PATCH" }),
+
+  updateMe: (data) =>
+    request("/users/me", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
 };
 
 // ─── M3: Documents ───────────────────────────────────────────────────────────
@@ -263,10 +352,69 @@ export const documentsAPI = {
       body: JSON.stringify(data),
     }),
 
-  // Upload a document with a file attachment (multipart).
-  // Used by MyCompany "Add Document" — mirrors onboarding/documents.
+  // Upload a document with a file attachment.
+  // Used by MyCompany "Add Document".
+  //
+  // Production (CloudFront + WAF): presign → PUT direct to S3 → confirm.
+  // The multipart body never traverses CloudFront, so WAF body-inspection
+  // rules (size + XSS patterns that match binary PDFs) cannot block it.
+  //
+  // Localhost / no-S3: backend returns method="direct" and we fall back to
+  // the multipart /documents/upload endpoint.
   upload: async (docType, title, file) => {
     const token = localStorage.getItem("token");
+
+    const readErr = async (res, fallbackLabel) => {
+      const raw = await res.text().catch(() => "");
+      let detail = "";
+      try { detail = (JSON.parse(raw) || {}).detail || ""; } catch { /* not JSON */ }
+      const snippet = raw && !detail ? ` — ${raw.slice(0, 200)}` : "";
+      return detail || `${fallbackLabel} (HTTP ${res.status}${snippet})`;
+    };
+
+    const postJson = async (path, body) => {
+      const res = await fetch(`${API_BASE}${path}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await readErr(res, "Document upload failed"));
+      return res.json();
+    };
+
+    const contentType = file.type || "application/octet-stream";
+
+    // 1. Ask backend whether to use S3 or direct multipart
+    const presign = await postJson("/documents/presign", {
+      doc_type:     docType,
+      title,
+      filename:     file.name,
+      content_type: contentType,
+      file_size:    file.size,
+    });
+
+    if (presign.method === "s3") {
+      // 2a. PUT directly to S3 — bypasses CloudFront WAF entirely.
+      // Content-Type MUST match what the URL was signed with or S3 returns 403.
+      const s3Res = await fetch(presign.upload_url, {
+        method:  "PUT",
+        headers: { "Content-Type": presign.content_type || contentType },
+        body:    file,
+      });
+      if (s3Res.ok) {
+        return postJson("/documents/confirm", {
+          s3_key:       presign.s3_key,
+          doc_type:     docType,
+          title,
+          filename:     file.name,
+          content_type: presign.content_type || contentType,
+        });
+      }
+      const errBody = await s3Res.text().catch(() => "");
+      console.warn("S3 upload failed, falling back to direct:", s3Res.status, errBody);
+    }
+
+    // 2b. Direct multipart fallback (localhost / S3 misconfig)
     const formData = new FormData();
     formData.append("doc_type", docType);
     formData.append("title", title);
@@ -277,10 +425,7 @@ export const documentsAPI = {
       headers: { Authorization: `Bearer ${token}` },
       body: formData,
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || `Document upload failed (HTTP ${res.status})`);
-    }
+    if (!res.ok) throw new Error(await readErr(res, "Document upload failed"));
     return res.json();
   },
 
@@ -466,15 +611,11 @@ export const adsAPI = {
     request(`/advertisements/${adId}/host-page`, { method: "POST" }),
 
   // Returns URL strings (not API calls) — used for preview/download <a> hrefs.
-  // Token passed as query param so the browser can open them directly.
-  websitePreviewUrl: (adId) => {
-    const token = localStorage.getItem("token");
-    return `/api/advertisements/${adId}/website?token=${encodeURIComponent(token)}`;
-  },
-  websiteDownloadUrl: (adId) => {
-    const token = localStorage.getItem("token");
-    return `/api/advertisements/${adId}/website?download=true&token=${encodeURIComponent(token)}`;
-  },
+  // No token needed: landing page is public (no secrets, safe as Meta Ads redirect URL).
+  websitePreviewUrl: (adId) =>
+    `/api/advertisements/${adId}/website`,
+  websiteDownloadUrl: (adId) =>
+    `/api/advertisements/${adId}/website?download=true`,
 
   minorEditStrategy: (adId, data) =>
     request(`/advertisements/${adId}/minor-edit`, {
@@ -630,6 +771,9 @@ export const analyticsAPI = {
   triggerOptimize: (adId) =>
     request(`/analytics/${adId}/optimize`, { method: "POST" }),
 
+  getOptimizeStatus: (adId, logId) =>
+    request(`/analytics/${adId}/optimize/status?log_id=${logId}`),
+
   regenerateItem: (adId, prompt, itemType = "general") =>
     request(`/analytics/${adId}/regenerate-item`, {
       method: "POST",
@@ -666,4 +810,12 @@ export const surveyAPI = {
   // Get a single response with full details.
   get: (adId, responseId) =>
     request(`/advertisements/${adId}/survey-responses/${responseId}`),
+
+  // Pull completed call transcripts from ElevenLabs and store them (manual sync).
+  syncTranscripts: (adId) =>
+    request(`/advertisements/${adId}/sync-voice-transcripts`, { method: "POST" }),
+};
+
+export const appointmentsAPI = {
+  list: (adId) => request(`/advertisements/${adId}/appointments`),
 };

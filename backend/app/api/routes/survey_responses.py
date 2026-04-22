@@ -11,7 +11,7 @@ GET /api/advertisements/{ad_id}/survey-responses
   — Study Coordinator (company-scoped) only.
 
 GET /api/advertisements/{ad_id}/survey-responses/{response_id}
-  — Returns a single response with full details.
+  — Returns a single response with full details including voice call transcript.
   — Study Coordinator (company-scoped) only.
 """
 
@@ -20,10 +20,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from typing import List, Optional
 
 from app.db.database import get_db
-from app.models.models import Advertisement, SurveyResponse, User, UserRole
+from app.models.models import Advertisement, SurveyResponse, VoiceSession, CallTranscript, User, UserRole
 from app.schemas.schemas import SurveyResponseCreate, SurveyResponseOut
 from app.core.security import get_current_user
 
@@ -83,8 +84,15 @@ async def submit_survey_response(
         is_eligible=body.is_eligible,
     )
     db.add(response)
-    await db.flush()
-    return response
+    await db.commit()
+    await db.refresh(response)
+
+    refreshed = await db.execute(
+        select(SurveyResponse)
+        .where(SurveyResponse.id == response.id)
+        .options(selectinload(SurveyResponse.voice_sessions))
+    )
+    return refreshed.scalar_one()
 
 
 # ── List responses (study coordinator, company-scoped) ─────────────────────────
@@ -104,12 +112,15 @@ async def list_survey_responses(
     result = await db.execute(
         select(SurveyResponse)
         .where(SurveyResponse.advertisement_id == ad_id)
+        .options(
+            selectinload(SurveyResponse.voice_sessions).selectinload(VoiceSession.transcripts)
+        )
         .order_by(SurveyResponse.created_at.desc())
     )
     return result.scalars().all()
 
 
-# ── Get single response ────────────────────────────────────────────────────────
+# ── Get single response (with voice transcript) ────────────────────────────────
 @router.get(
     "/advertisements/{ad_id}/survey-responses/{response_id}",
     response_model=SurveyResponseOut,
@@ -125,9 +136,13 @@ async def get_survey_response(
         raise HTTPException(status_code=404, detail="Campaign not found")
 
     result = await db.execute(
-        select(SurveyResponse).where(
+        select(SurveyResponse)
+        .where(
             SurveyResponse.id == response_id,
             SurveyResponse.advertisement_id == ad_id,
+        )
+        .options(
+            selectinload(SurveyResponse.voice_sessions).selectinload(VoiceSession.transcripts)
         )
     )
     response = result.scalar_one_or_none()

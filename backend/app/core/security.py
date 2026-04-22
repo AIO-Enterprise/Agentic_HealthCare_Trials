@@ -20,7 +20,19 @@ from app.db.database import get_db
 from app.models.models import User, UserRole, Company
 
 # Routes that authenticated-but-not-yet-onboarded users are allowed to call.
-_ONBOARDING_PREFIXES = ("/api/onboarding", "/api/auth", "/api/health", "/api/brand-kit", "/api/users", "/api/company")
+# /api/documents is included because Study Coordinators / Ethics Managers may
+# upload or manage company documents before or during the initial AI-training
+# step that flips Company.onboarded to True. Role checks on each route still
+# prevent unauthorised access.
+_ONBOARDING_PREFIXES = (
+    "/api/onboarding",
+    "/api/auth",
+    "/api/health",
+    "/api/brand-kit",
+    "/api/users",
+    "/api/company",
+    "/api/documents",
+)
 
 # ─── Password hashing ────────────────────────────────────────────────────────
 

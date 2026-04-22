@@ -657,6 +657,10 @@ class WebsiteAgentService:
     <div class="reg-done" id="reg-done">
       &#10003;&ensp;Thank you! Your details have been received.<br>
       A member of the study team will be in touch with you shortly.
+      <div id="reg-book-wrap" style="display:none;margin-top:18px;">
+        <p style="margin:0 0 10px;font-size:.9rem;color:#374151;">You appear to be eligible for this trial. Would you like to book your first visit?</p>
+        <button id="reg-book-btn" style="background:var(--accent,#10b981);color:#fff;border:none;border-radius:50px;padding:12px 28px;font-size:.95rem;font-weight:700;cursor:pointer;font-family:inherit;">&#128197;&ensp;Book Appointment</button>
+      </div>
     </div>
     <div id="reg-form-fields">
       <div class="reg-field">
@@ -750,9 +754,22 @@ class WebsiteAgentService:
         throw new Error((err.detail) || ('Submission failed (HTTP ' + resp.status + ')'));
       }}
       /* Success */
+      var regData = await resp.json().catch(function () {{ return {{}}; }});
+      window._surveyResponseId = regData.id || null;
       if (fieldsEl) fieldsEl.style.display = 'none';
       if (doneEl)   doneEl.style.display   = 'block';
       if (noteEl)   noteEl.style.display   = 'none';
+
+      /* Show book-appointment button if eligible */
+      if (eligible) {{
+        var bookWrap = document.getElementById('reg-book-wrap');
+        if (bookWrap) bookWrap.style.display = 'block';
+        /* Pre-fill appt name/phone from reg form */
+        var an = document.getElementById('appt-patient-name');
+        var ap = document.getElementById('appt-patient-phone');
+        if (an) an.value = name;
+        if (ap) ap.value = phone;
+      }}
 
       /* Reveal interaction section after brief delay */
       setTimeout(function () {{
@@ -767,6 +784,168 @@ class WebsiteAgentService:
       submitEl.disabled    = false;
       submitEl.textContent = 'Submit Details';
     }}
+  }});
+}})();
+</script>
+<section id="appt-section" style="display:none;background:#f0f4f8;padding:48px 24px;">
+  <div style="max-width:560px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:20px;padding:40px 36px;box-shadow:0 4px 24px rgba(0,0,0,0.07);">
+    <div style="text-align:center;margin-bottom:24px;">
+      <div style="font-size:2.2rem;margin-bottom:6px;">&#128197;</div>
+      <h2 style="font-size:1.4rem;font-weight:800;color:var(--primary,#1e3a5f);margin:0 0 6px;">Book Your First Visit</h2>
+      <p style="color:#64748b;font-size:.9rem;line-height:1.5;margin:0;">Select a date and an available time slot for your first trial appointment.</p>
+    </div>
+    <div style="margin-bottom:14px;">
+      <label style="display:block;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:6px;">Full Name</label>
+      <input id="appt-patient-name" type="text" placeholder="e.g. Jane Smith" style="width:100%;box-sizing:border-box;padding:10px 13px;border:1.5px solid #e2e8f0;border-radius:9px;font-size:.9rem;font-family:inherit;outline:none;" />
+    </div>
+    <div style="margin-bottom:18px;">
+      <label style="display:block;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:6px;">Phone Number</label>
+      <input id="appt-patient-phone" type="tel" placeholder="e.g. +1 555 123 4567" style="width:100%;box-sizing:border-box;padding:10px 13px;border:1.5px solid #e2e8f0;border-radius:9px;font-size:.9rem;font-family:inherit;outline:none;" />
+    </div>
+    <div style="margin-bottom:14px;">
+      <label style="display:block;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:6px;">Select Date</label>
+      <input id="appt-date" type="date" style="width:100%;box-sizing:border-box;padding:10px 13px;border:1.5px solid #e2e8f0;border-radius:9px;font-size:.9rem;font-family:inherit;outline:none;" />
+    </div>
+    <div style="margin-bottom:18px;">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;">
+        <label style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;">Available Slots</label>
+        <span id="appt-tz" style="font-size:.65rem;color:#94a3b8;"></span>
+      </div>
+      <div id="appt-slots" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">
+        <p style="font-size:.82rem;color:#94a3b8;grid-column:1/-1;">Select a date above to see available slots.</p>
+      </div>
+    </div>
+    <div id="appt-status" style="display:none;padding:10px 13px;border-radius:9px;font-size:.84rem;font-weight:600;margin-bottom:14px;"></div>
+    <button id="appt-confirm-btn" style="width:100%;background:var(--accent,#10b981);color:#fff;border:none;border-radius:50px;padding:13px;font-size:.95rem;font-weight:700;cursor:pointer;font-family:inherit;">Confirm Appointment &#8594;</button>
+    <div id="appt-done" style="display:none;text-align:center;padding:20px;background:rgba(16,185,129,.08);border:2px solid var(--accent,#10b981);border-radius:13px;margin-top:16px;">
+      <div style="font-size:1.8rem;margin-bottom:6px;">&#9989;</div>
+      <p id="appt-done-msg" style="font-size:1rem;font-weight:800;color:#065f46;margin:0 0 4px;">Appointment confirmed!</p>
+      <p style="font-size:.83rem;color:#64748b;margin:0;">The study team will send you a confirmation shortly.</p>
+    </div>
+  </div>
+</section>
+<style>
+#appt-slots button{{padding:9px 4px;text-align:center;border:1.5px solid #e2e8f0;border-radius:8px;cursor:pointer;font-size:.78rem;font-weight:600;color:#374151;background:#fff;transition:all .15s;font-family:inherit;}}
+#appt-slots button:hover:not(:disabled){{border-color:var(--primary,#1e3a5f);color:var(--primary,#1e3a5f);background:#f8fafc;}}
+#appt-slots button.appt-sel{{background:var(--primary,#1e3a5f);color:#fff;border-color:var(--primary,#1e3a5f);}}
+#appt-slots button:disabled{{opacity:.28;cursor:not-allowed;}}
+</style>
+<script>
+(function () {{
+  var AD_ID  = '{ad_id}';
+  var API    = window.location.origin;
+  var dateEl = document.getElementById('appt-date');
+  var slots  = document.getElementById('appt-slots');
+  var tzEl   = document.getElementById('appt-tz');
+  var stEl   = document.getElementById('appt-status');
+  var cBtn   = document.getElementById('appt-confirm-btn');
+  var doneEl = document.getElementById('appt-done');
+  var msgEl  = document.getElementById('appt-done-msg');
+  var nameEl = document.getElementById('appt-patient-name');
+  var phEl   = document.getElementById('appt-patient-phone');
+  var bookBtn= document.getElementById('reg-book-btn');
+  var apptSec= document.getElementById('appt-section');
+  if (!dateEl || !cBtn) return;
+
+  /* Set min date to today */
+  var now = new Date();
+  var mm = String(now.getMonth()+1).padStart(2,'0');
+  var dd = String(now.getDate()).padStart(2,'0');
+  dateEl.min = now.getFullYear()+'-'+mm+'-'+dd;
+  try {{ tzEl.textContent = '('+Intl.DateTimeFormat().resolvedOptions().timeZone+')'; }} catch(e) {{}}
+
+  var _cache = {{}}, _selTime = '';
+
+  function showSt(msg, tp) {{
+    stEl.innerHTML = msg;
+    var bg = tp === 'error' ? '#fef2f2;color:#b91c1c;border:1.5px solid #fecaca'
+           : tp === 'ok'    ? '#f0fdf4;color:#15803d;border:1.5px solid #bbf7d0'
+           :                  '#eff6ff;color:#1d4ed8;border:1.5px solid #bfdbfe';
+    stEl.style.cssText = 'display:block;padding:10px 13px;border-radius:9px;font-size:.84rem;font-weight:600;margin-bottom:14px;background:' + bg;
+  }}
+  function hideSt() {{ stEl.style.display = 'none'; }}
+
+  function renderSlots(data) {{
+    _selTime = '';
+    slots.innerHTML = '';
+    var any = false;
+    (data || []).forEach(function(s) {{
+      var b = document.createElement('button');
+      b.textContent = s.label;
+      if (!s.available) {{
+        b.disabled = true;
+      }} else {{
+        any = true;
+        b.addEventListener('click', function() {{
+          _selTime = s.time;
+          slots.querySelectorAll('button').forEach(function(x) {{ x.classList.remove('appt-sel'); }});
+          b.classList.add('appt-sel');
+          hideSt();
+        }});
+      }}
+      slots.appendChild(b);
+    }});
+    if (!any) slots.innerHTML = '<p style="font-size:.82rem;color:#94a3b8;grid-column:1/-1;">No slots available &mdash; try another date.</p>';
+  }}
+
+  function loadSlots(d) {{
+    if (_cache[d]) {{ renderSlots(_cache[d]); return; }}
+    slots.innerHTML = '<p style="font-size:.82rem;color:#94a3b8;grid-column:1/-1;">Loading slots&hellip;</p>';
+    fetch(API+'/api/advertisements/'+AD_ID+'/appointments/slots?date='+d)
+      .then(function(r) {{ return r.ok ? r.json() : Promise.reject(r.status); }})
+      .then(function(data) {{ _cache[d] = data.slots || []; renderSlots(_cache[d]); }})
+      .catch(function() {{ slots.innerHTML = '<p style="font-size:.82rem;color:#ef4444;grid-column:1/-1;">Could not load slots. Please try again.</p>'; }});
+  }}
+
+  dateEl.addEventListener('change', function() {{ if (dateEl.value) loadSlots(dateEl.value); }});
+
+  /* Book Appointment button opens the section */
+  if (bookBtn && apptSec) {{
+    bookBtn.addEventListener('click', function() {{
+      apptSec.style.display = '';
+      apptSec.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+    }});
+  }}
+
+  cBtn.addEventListener('click', function() {{
+    var nm = nameEl ? nameEl.value.trim() : '';
+    var ph = phEl   ? phEl.value.trim()   : '';
+    if (!nm) {{ showSt('Please enter your name.', 'error'); return; }}
+    if (!ph) {{ showSt('Please enter your phone number.', 'error'); return; }}
+    if (!dateEl.value) {{ showSt('Please select a date.', 'error'); return; }}
+    if (!_selTime)     {{ showSt('Please select a time slot.', 'error'); return; }}
+
+    var iso   = dateEl.value + 'T' + _selTime + ':00';
+    var srId  = window._surveyResponseId || null;
+    cBtn.disabled = true;
+    cBtn.textContent = 'Booking…';
+    showSt('Reserving your slot…', 'info');
+
+    fetch(API+'/api/advertisements/'+AD_ID+'/appointments', {{
+      method: 'POST',
+      headers: {{'Content-Type':'application/json'}},
+      body: JSON.stringify({{patient_name:nm, patient_phone:ph, slot_datetime:iso, survey_response_id:srId}})
+    }}).then(function(r) {{
+      if (r.status === 409) {{ throw new Error('That slot was just taken — please pick another.'); }}
+      if (!r.ok) return r.json().catch(function() {{ return {{}}; }}).then(function(j) {{ throw new Error(j.detail || 'Booking failed'); }});
+      return r.json();
+    }}).then(function() {{
+      var lbl = _selTime;
+      if (_cache[dateEl.value]) {{
+        var match = _cache[dateEl.value].find(function(s) {{ return s.time === _selTime; }});
+        if (match) lbl = match.label;
+      }}
+      hideSt();
+      cBtn.style.display = 'none';
+      if (msgEl) msgEl.textContent = '✅ Confirmed for ' + dateEl.value + ' at ' + lbl;
+      if (doneEl) doneEl.style.display = 'block';
+      delete _cache[dateEl.value];
+    }}).catch(function(e) {{
+      showSt('&#9888; ' + e.message, 'error');
+      cBtn.disabled = false;
+      cBtn.textContent = 'Confirm Appointment →';
+      if (dateEl.value) loadSlots(dateEl.value);
+    }});
   }});
 }})();
 </script>"""

@@ -450,3 +450,37 @@ class SurveyResponseOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+# ─── Appointment ──────────────────────────────────────────────────────────────
+
+class SlotInfo(BaseModel):
+    time:      str   # "HH:MM"
+    label:     str   # "9:00 AM"
+    available: bool
+
+class AvailableSlotsResponse(BaseModel):
+    date:             str
+    duration_minutes: int
+    slots:            List[SlotInfo]
+
+class AppointmentCreate(BaseModel):
+    patient_name:       str
+    patient_phone:      str
+    slot_datetime:      datetime
+    survey_response_id: Optional[str] = None
+    notes:              Optional[str] = None
+
+class AppointmentOut(BaseModel):
+    id:                 str
+    advertisement_id:   str
+    survey_response_id: Optional[str] = None
+    patient_name:       str
+    patient_phone:      str
+    slot_datetime:      datetime
+    duration_minutes:   int
+    status:             str
+    notes:              Optional[str] = None
+    created_at:         datetime
+
+    class Config:
+        from_attributes = True

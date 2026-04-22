@@ -705,17 +705,26 @@ Respond with ONLY a valid JSON object, no markdown:
         If voice_id is not set, the voice is auto-selected from the country in
         trial_location[0] so the accent matches the campaign's target region.
         """
-        # Auto-select accent-matched voice from trial_location if no explicit voice_id
-        explicit_voice = bot_config.get("voice_id") or settings.ELEVENLABS_VOICE_ID
-        if explicit_voice:
-            voice_id = explicit_voice
+        # Voice selection priority:
+        #   1. bot_config.voice_id — publisher explicitly chose a voice
+        #   2. Country-based accent matching from trial_location
+        #   3. settings.ELEVENLABS_VOICE_ID — global fallback (last resort only)
+        publisher_voice = bot_config.get("voice_id")
+        country = ""
+        if trial_location and isinstance(trial_location, list) and len(trial_location) > 0:
+            loc = trial_location[0]
+            country = (loc.get("country") or "") if isinstance(loc, dict) else ""
+
+        if publisher_voice:
+            voice_id = publisher_voice
+            logger.info("Using publisher-selected voice %s for ad", voice_id)
+        elif country:
+            selected = _voice_for_country(country)
+            voice_id = selected["id"]
+            logger.info("Auto-selected accent voice for country=%r → %s (%s)", country, selected["name"], voice_id)
         else:
-            country = ""
-            if trial_location and isinstance(trial_location, list) and len(trial_location) > 0:
-                loc = trial_location[0]
-                country = (loc.get("country") or "") if isinstance(loc, dict) else ""
-            voice_id = _voice_for_country(country)["id"]
-            logger.info("Auto-selected accent voice for country=%r → voice_id=%s", country, voice_id)
+            voice_id = settings.ELEVENLABS_VOICE_ID or "EXAVITQu4vr4xnSDxMaL"
+            logger.info("No country set — using default voice %s", voice_id)
 
         first_message = bot_config.get(
             "first_message", "Hello! How can I help you today?"
@@ -996,18 +1005,25 @@ Respond with ONLY a valid JSON object, no markdown:
             )
 
         # 8. Voice rules + ElevenLabs audio tags (always last)
-        # Build country-aware accent instruction
         locations = ad.trial_location or []
-        country = ""
+        loc_country = ""
         if locations and isinstance(locations[0], dict):
-            country = locations[0].get("country", "")
+            loc_country = locations[0].get("country", "")
+
+        # Map country name → adjective for the accent instruction
+        _country_adj = {
+            "australia": "Australian", "new zealand": "New Zealand",
+            "united kingdom": "British", "ireland": "Irish",
+            "united states": "American", "canada": "Canadian",
+            "india": "Indian", "germany": "German",
+            "france": "French", "spain": "Spanish",
+        }
+        accent_adj = _country_adj.get(loc_country.lower(), loc_country)
         accent_note = (
-            f"You have a natural {country} accent — speak exactly as a local would, "
-            f"with the rhythm, intonation, and warmth typical of {country}. "
+            f"You have a natural {accent_adj} accent. "
+            f"Use locally natural expressions, rhythm, and warmth — speak exactly as a {accent_adj} local would. "
             "Never sound robotic or overly formal."
-        ) if country else (
-            "Speak with a warm, natural, conversational tone."
-        )
+        ) if accent_adj else "Speak with a warm, natural, conversational tone."
 
         sections.append(
             "## Critical Voice Rules\n"
@@ -1016,40 +1032,36 @@ Respond with ONLY a valid JSON object, no markdown:
             "- Keep every turn to 1–2 short sentences. Never exceed 3.\n"
             "- Never use bullet points, numbered lists, markdown, or headers.\n"
             "- Never spell out punctuation (no 'dash', 'colon', 'asterisk').\n"
-            "- Speak naturally — contractions, filler affirmations are encouraged.\n"
+            "- Speak naturally — contractions and filler affirmations (Sure!, Got it., Oh absolutely!) are encouraged.\n"
             "- If asked something you don't know, say so honestly and offer to have a human follow up.\n"
             "- Never fabricate trial data, timelines, or medical claims.\n"
             "\n"
-            "## Human Expression & Audio Tags (REQUIRED — use in every response)\n"
-            "Embed these ElevenLabs audio tags to sound genuinely human. Rules:\n"
+            "## Audio Delivery — Pauses & Human Expressions (REQUIRED in every response)\n"
+            "ElevenLabs v3 renders these tags and written expressions natively. Use them.\n"
             "\n"
-            "PAUSES:\n"
-            "- <break time=\"0.2s\" /> — brief pause between two related clauses.\n"
-            "- <break time=\"0.4s\" /> — natural breath after a greeting or before shifting topic.\n"
-            "- <break time=\"0.6s\" /> — before asking a question, giving the caller space to prepare.\n"
-            "- <break time=\"1.0s\" /> — after delivering important info (dates, eligibility result, next steps).\n"
-            "\n"
-            "HUMAN WARMTH SOUNDS (use sparingly — 1–2 per call, only when genuinely fitting):\n"
-            "- [laughs] — light, genuine laughter when something is lightly amusing.\n"
-            "- [chuckles] — a soft chuckle when the caller says something endearing or funny.\n"
-            "- [giggles] — only if the moment is very light-hearted and the caller is clearly relaxed.\n"
-            "- \"Mm!\" or \"Oh!\" — natural verbal reactions showing you're listening.\n"
-            "\n"
-            "EMPHASIS:\n"
-            "- <emphasis level=\"moderate\"> ... </emphasis> — stress a key word (trial name, key benefit).\n"
-            "- <emphasis level=\"strong\"> ... </emphasis> — rare; only for the single most important word.\n"
-            "\n"
-            "RULES:\n"
-            "- Never stack more than 2 breaks in a row.\n"
-            "- Never use [laughs] or [giggles] when discussing medical conditions, eligibility failure, or serious topics.\n"
+            "PAUSES — use <break time=\"Xs\" /> only:\n"
+            "- <break time=\"0.2s\" /> — brief pause between two clauses.\n"
+            "- <break time=\"0.4s\" /> — natural breath after a greeting or topic shift.\n"
+            "- <break time=\"0.6s\" /> — before asking a question.\n"
+            "- <break time=\"1.0s\" /> — after delivering key info (dates, eligibility result).\n"
             "- Never use <break> mid-word or inside a proper noun.\n"
-            "- Every response must contain at least one <break> tag.\n"
+            "- Every response must contain at least one <break time> tag.\n"
             "\n"
-            "EXAMPLE (Australian campaign):\n"
-            "\"G'day! <break time=\"0.3s\" /> Thanks so much for calling about the "
-            "<emphasis level=\"moderate\">Sleep Trials</emphasis> study. <break time=\"0.4s\" /> "
-            "It's a pretty exciting one — eight weeks, no medication, completely free. <break time=\"0.6s\" /> "
-            "Mind if I ask you a couple of quick questions to see if it's a good fit for you?\""
+            "HUMAN WARMTH — write these as plain text, NOT in brackets:\n"
+            "- Write 'Ha!' or 'Haha!' for a genuine light laugh — ElevenLabs v3 renders this naturally.\n"
+            "- Write 'Heh.' for a soft, warm chuckle moment.\n"
+            "- Write 'Oh!' 'Mm!' 'Ah!' as natural listening reactions.\n"
+            "- Never write [laughs], [chuckles], [giggles] — those are read aloud literally.\n"
+            "- Only use warmth expressions on light-hearted moments. Never on medical topics or bad news.\n"
+            "\n"
+            "EXAMPLE of a well-formed response:\n"
+            "\"G'day! <break time=\"0.3s\" /> Thanks so much for your interest in the Sleep Trials study. "
+            "<break time=\"0.4s\" /> It's a pretty exciting one — eight weeks, no medication, completely free. "
+            "<break time=\"0.6s\" /> Mind if I ask you a couple of quick questions to see if it's a good fit?\"\n"
+            "\n"
+            "EXAMPLE of a warm moment:\n"
+            "\"Haha, yeah, I totally get that — those early morning wake-ups are the worst! "
+            "<break time=\"0.4s\" /> Let me see if this study might be just the thing for you.\""
         )
 
         return "\n\n".join(sections)

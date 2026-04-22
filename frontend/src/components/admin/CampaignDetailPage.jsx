@@ -1382,7 +1382,8 @@ function StrategyViewer({ strategy, ad }) {
           <SBar label="Overview" />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 14, alignItems: "start" }}>
 
-            {/* Executive Summary */}
+            {/* Left: Executive Summary + Messaging stacked */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {executive_summary && (
               <SCard>
                 <SCardHead icon={<Sparkles size={13} />} label="Executive Summary" />
@@ -1418,7 +1419,82 @@ function StrategyViewer({ strategy, ad }) {
               </SCard>
             )}
 
-            {/* Right: Audience + Messaging stacked */}
+              {messaging && (
+                <SCard>
+                  <SCardHead icon={<MessageCircle size={13} />} label="Messaging" />
+                  <div style={{ display: "flex", flexDirection: "column" }}>
+
+                    {/* Core message — prominent quote block */}
+                    {messaging.core_message && (
+                      <div style={{ padding: "16px 18px" }}>
+                        <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-accent)", marginBottom: 8 }}>Core Message</p>
+                        <div style={{
+                          padding: "12px 14px", borderRadius: 8,
+                          backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.05)",
+                          borderLeft: "3px solid var(--color-accent)",
+                        }}>
+                          <p style={{ fontSize: "0.84rem", color: "var(--color-input-text)", lineHeight: 1.65, margin: 0, fontWeight: 500 }}>
+                            {messaging.core_message}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Tone */}
+                    {messaging.tone && (
+                      <div style={{ padding: "14px 18px", borderTop: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)" }}>
+                        <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-sidebar-text)", marginBottom: 6 }}>Tone</p>
+                        <p style={{ fontSize: "0.78rem", color: "var(--color-input-text)", lineHeight: 1.6, margin: 0 }}>{messaging.tone}</p>
+                      </div>
+                    )}
+
+                    {/* Key phrases */}
+                    {messaging.key_phrases?.length > 0 && (
+                      <div style={{ padding: "12px 16px", borderTop: "1px solid var(--color-card-border)" }}>
+                        <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-sidebar-text)", marginBottom: 7 }}>Key Phrases</p>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                          {messaging.key_phrases.map((p, i) => (
+                            <span key={i} style={{
+                              fontSize: "0.72rem", padding: "4px 10px", borderRadius: 6, fontWeight: 500,
+                              backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.07)",
+                              color: "var(--color-input-text)", border: "1px solid var(--color-card-border)",
+                            }}>{p}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* CTA */}
+                    {messaging.cta && (
+                      <div style={{ padding: "12px 16px", borderTop: "1px solid var(--color-card-border)", display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-sidebar-text)", flexShrink: 0 }}>CTA</span>
+                        <span style={{
+                          fontSize: "0.78rem", fontWeight: 700, color: "var(--color-accent)",
+                          padding: "4px 12px", borderRadius: 7,
+                          backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
+                          border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.2)",
+                        }}>{messaging.cta}</span>
+                      </div>
+                    )}
+
+                    {/* Extra messaging keys */}
+                    {Object.entries(messaging)
+                      .filter(([k]) => !["core_message", "tone", "cta", "key_phrases", "key_differentiators"].includes(k))
+                      .map(([k, v]) => (
+                        <div key={k} style={{ padding: "10px 16px", borderTop: "1px solid var(--color-card-border)" }}>
+                          <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-sidebar-text)", marginBottom: 4 }}>
+                            {k.replace(/_/g, " ")}
+                          </p>
+                          <GenericValue value={v} />
+                        </div>
+                      ))
+                    }
+                  </div>
+                </SCard>
+              )}
+            </div>
+
+            {/* Right: Audience only */}
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
               {target_audience && (
@@ -1487,79 +1563,6 @@ function StrategyViewer({ strategy, ad }) {
                 </SCard>
               )}
 
-              {messaging && (
-                <SCard>
-                  <SCardHead icon={<MessageCircle size={13} />} label="Messaging" />
-                  <div style={{ display: "flex", flexDirection: "column" }}>
-
-                    {/* Core message — prominent quote block */}
-                    {messaging.core_message && (
-                      <div style={{ padding: "16px 18px" }}>
-                        <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-accent)", marginBottom: 8 }}>Core Message</p>
-                        <div style={{
-                          padding: "12px 14px", borderRadius: 8,
-                          backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.05)",
-                          borderLeft: "3px solid var(--color-accent)",
-                        }}>
-                          <p style={{ fontSize: "0.84rem", color: "var(--color-input-text)", lineHeight: 1.65, margin: 0, fontWeight: 500 }}>
-                            {messaging.core_message}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Tone — callout block, never a pill */}
-                    {messaging.tone && (
-                      <div style={{ padding: "14px 18px", borderTop: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)" }}>
-                        <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-sidebar-text)", marginBottom: 6 }}>Tone</p>
-                        <p style={{ fontSize: "0.78rem", color: "var(--color-input-text)", lineHeight: 1.6, margin: 0 }}>{messaging.tone}</p>
-                      </div>
-                    )}
-
-                    {/* Key phrases — small chips (usually short words) */}
-                    {messaging.key_phrases?.length > 0 && (
-                      <div style={{ padding: "12px 16px", borderTop: "1px solid var(--color-card-border)" }}>
-                        <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-sidebar-text)", marginBottom: 7 }}>Key Phrases</p>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                          {messaging.key_phrases.map((p, i) => (
-                            <span key={i} style={{
-                              fontSize: "0.72rem", padding: "4px 10px", borderRadius: 6, fontWeight: 500,
-                              backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.07)",
-                              color: "var(--color-input-text)", border: "1px solid var(--color-card-border)",
-                            }}>{p}</span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* CTA — action button style */}
-                    {messaging.cta && (
-                      <div style={{ padding: "12px 16px", borderTop: "1px solid var(--color-card-border)", display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--color-sidebar-text)", flexShrink: 0 }}>CTA</span>
-                        <span style={{
-                          fontSize: "0.78rem", fontWeight: 700, color: "var(--color-accent)",
-                          padding: "4px 12px", borderRadius: 7,
-                          backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
-                          border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.2)",
-                        }}>{messaging.cta}</span>
-                      </div>
-                    )}
-
-                    {/* Extra messaging keys */}
-                    {Object.entries(messaging)
-                      .filter(([k]) => !["core_message", "tone", "cta", "key_phrases", "key_differentiators"].includes(k))
-                      .map(([k, v]) => (
-                        <div key={k} style={{ padding: "10px 16px", borderTop: "1px solid var(--color-card-border)" }}>
-                          <p style={{ fontSize: "0.58rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-sidebar-text)", marginBottom: 4 }}>
-                            {k.replace(/_/g, " ")}
-                          </p>
-                          <GenericValue value={v} />
-                        </div>
-                      ))
-                    }
-                  </div>
-                </SCard>
-              )}
             </div>
           </div>
         </div>
@@ -1626,40 +1629,42 @@ function StrategyViewer({ strategy, ad }) {
             {Object.entries(social_content).map(([platform, content]) => (
               <SCard key={platform}>
                 <SCardHead icon={<Send size={13} />} label={platform} />
-                <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 14 }}>
+                <div style={{ padding: "14px 16px", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, alignItems: "start" }}>
 
                   {/* Caption */}
-                  {content.caption && (
-                    <div>
-                      <p style={{ fontSize: "0.62rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-accent)", marginBottom: 6 }}>Caption</p>
-                      <p style={{ fontSize: "0.82rem", color: "var(--color-input-text)", lineHeight: 1.6, margin: 0 }}>{content.caption}</p>
-                    </div>
-                  )}
+                  <div>
+                    <p style={{ fontSize: "0.62rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-accent)", marginBottom: 6 }}>Caption</p>
+                    {content.caption
+                      ? <p style={{ fontSize: "0.82rem", color: "var(--color-input-text)", lineHeight: 1.6, margin: 0 }}>{content.caption}</p>
+                      : <p style={{ fontSize: "0.8rem", color: "var(--color-sidebar-text)", margin: 0 }}>—</p>
+                    }
+                  </div>
 
                   {/* Hashtags */}
-                  {content.hashtags && (
-                    <div>
-                      <p style={{ fontSize: "0.62rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-accent)", marginBottom: 6 }}>Hashtags</p>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                        {content.hashtags.split(/\s+/).filter(h => h).map((h, i) => (
-                          <span key={i} style={{
-                            fontSize: "0.72rem", padding: "3px 9px", borderRadius: 999, fontWeight: 600,
-                            backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
-                            color: "var(--color-accent)",
-                          }}>{h.startsWith("#") ? h : `#${h}`}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  <div>
+                    <p style={{ fontSize: "0.62rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-accent)", marginBottom: 6 }}>Hashtags</p>
+                    {content.hashtags
+                      ? <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                          {content.hashtags.split(/\s+/).filter(h => h).map((h, i) => (
+                            <span key={i} style={{
+                              fontSize: "0.72rem", padding: "3px 9px", borderRadius: 999, fontWeight: 600,
+                              backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.1)",
+                              color: "var(--color-accent)",
+                            }}>{h.startsWith("#") ? h : `#${h}`}</span>
+                          ))}
+                        </div>
+                      : <p style={{ fontSize: "0.8rem", color: "var(--color-sidebar-text)", margin: 0 }}>—</p>
+                    }
+                  </div>
 
                   {/* Launch Schedule */}
-                  {content.launch_schedule && (
-                    <div style={{
-                      padding: "10px 13px", borderRadius: 10,
-                      backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.06)",
-                      border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.18)",
-                    }}>
-                      <p style={{ fontSize: "0.62rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-accent)", marginBottom: 7 }}>Recommended Launch Window</p>
+                  <div style={{
+                    padding: "10px 13px", borderRadius: 10,
+                    backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.06)",
+                    border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.18)",
+                  }}>
+                    <p style={{ fontSize: "0.62rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--color-accent)", marginBottom: 7 }}>Launch Window</p>
+                    {content.launch_schedule ? <>
                       {content.launch_schedule.recommended_window && (
                         <p style={{ fontSize: "0.84rem", fontWeight: 700, color: "var(--color-input-text)", margin: "0 0 4px" }}>{content.launch_schedule.recommended_window}</p>
                       )}
@@ -1671,8 +1676,8 @@ function StrategyViewer({ strategy, ad }) {
                       {content.launch_schedule.rationale && (
                         <p style={{ fontSize: "0.72rem", color: "var(--color-sidebar-text)", fontStyle: "italic", margin: 0 }}>{content.launch_schedule.rationale}</p>
                       )}
-                    </div>
-                  )}
+                    </> : <p style={{ fontSize: "0.8rem", color: "var(--color-sidebar-text)", margin: 0 }}>—</p>}
+                  </div>
 
                 </div>
               </SCard>

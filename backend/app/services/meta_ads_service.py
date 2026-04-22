@@ -515,9 +515,14 @@ class MetaAdsService:
         display_url: Optional[str] = None,
         addon_type: Optional[str] = None,
         addon_phone: Optional[str] = None,
+        existing_campaign_id: Optional[str] = None,
+        existing_adset_id: Optional[str] = None,
     ) -> dict:
         """
         Full pipeline: images → campaign → ad set → creatives → ads.
+
+        If existing_campaign_id is provided, reuses that campaign and its ad set
+        instead of creating new ones (republish flow).
 
         All ads start ACTIVE and begin serving immediately.
         Returns campaign_id, adset_id, ad_ids, and a direct link to the Ads Manager.
@@ -534,9 +539,13 @@ class MetaAdsService:
         # Minimum enforced at 100 cents ($1.00).
         daily_budget_cents = max(100, int(daily_budget_usd * 100))
 
-        logger.info("STEP 1: Creating campaign...")
-        campaign_id = await self.create_campaign(campaign_name)
-        logger.info("STEP 1 OK: campaign %s", campaign_id)
+        if existing_campaign_id:
+            logger.info("STEP 1: Reusing existing campaign %s", existing_campaign_id)
+            campaign_id = existing_campaign_id
+        else:
+            logger.info("STEP 1: Creating campaign...")
+            campaign_id = await self.create_campaign(campaign_name)
+            logger.info("STEP 1 OK: campaign %s", campaign_id)
 
         # Fetch the Instagram actor connected to this page (best-effort — no hard failure).
         # Pre-filling this eliminates the manual Instagram-selection prompt in Ads Manager.
@@ -547,15 +556,19 @@ class MetaAdsService:
         else:
             logger.info("STEP 1b: No connected Instagram account found — skipping Instagram placement")
 
-        logger.info("STEP 2: Creating adset...")
-        adset_id = await self.create_adset(
-            campaign_id=campaign_id,
-            name=f"{campaign_name} – Ad Set",
-            daily_budget_cents=daily_budget_cents,
-            targeting_countries=targeting_countries,
-            page_id=page_id,
-        )
-        logger.info("STEP 2 OK: adset %s", adset_id)
+        if existing_adset_id:
+            logger.info("STEP 2: Reusing existing adset %s", existing_adset_id)
+            adset_id = existing_adset_id
+        else:
+            logger.info("STEP 2: Creating adset...")
+            adset_id = await self.create_adset(
+                campaign_id=campaign_id,
+                name=f"{campaign_name} – Ad Set",
+                daily_budget_cents=daily_budget_cents,
+                targeting_countries=targeting_countries,
+                page_id=page_id,
+            )
+            logger.info("STEP 2 OK: adset %s", adset_id)
 
         ad_ids = []
         for idx, creative in enumerate(to_publish):

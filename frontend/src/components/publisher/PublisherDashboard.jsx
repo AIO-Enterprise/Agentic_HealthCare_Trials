@@ -2571,9 +2571,14 @@ function aspectRatioForFormat(format = "") {
 // ─── Manage Ads Tab ───────────────────────────────────────────────────────────
 const DAY_OPTIONS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 
-function ManageTab({ ads, metaConnection }) {
+function ManageTab({ ads: initialAds, metaConnection }) {
+  const [ads, setAds] = useState(initialAds);
+  // Keep in sync when parent reloads
+  useEffect(() => { setAds(initialAds); }, [initialAds]);
+
   // Campaigns that have been distributed to Meta
-  const metaCampaigns = ads.filter((a) => a.bot_config?.meta_campaign_id);
+  // Show all published ads — even those that lost their campaign_id so the user can restore it
+  const metaCampaigns = ads.filter((a) => a.status === "published" || a.bot_config?.meta_campaign_id);
 
   const [metaAds,       setMetaAds]       = useState({});   // { adId: { loading, ads, error } }
   const [toggling,      setToggling]      = useState({});   // { metaAdId: true/false }
@@ -2587,6 +2592,28 @@ function ManageTab({ ads, metaConnection }) {
   const [pauseWindows,   setPauseWindows]   = useState([]);
   const [pauseSaving,    setPauseSaving]    = useState(false);
   const [savedSchedules, setSavedSchedules] = useState({}); // { adId: windows[] } — local cache after save
+
+  // ── Campaign ID override ────────────────────────────────────────────────────
+  const [campaignIdEdit,   setCampaignIdEdit]   = useState(null);  // adId being edited
+  const [campaignIdInput,  setCampaignIdInput]  = useState("");
+  const [campaignIdSaving, setCampaignIdSaving] = useState(false);
+
+  const openCampaignIdEdit = (ad) => {
+    setCampaignIdEdit(ad.id);
+    setCampaignIdInput(ad.bot_config?.meta_campaign_id || "");
+  };
+
+  const saveCampaignId = async (adId) => {
+    const trimmed = campaignIdInput.trim();
+    if (!trimmed) { alert("Campaign ID cannot be empty."); return; }
+    setCampaignIdSaving(true);
+    try {
+      const updated = await adsAPI.updateBotConfig(adId, { meta_campaign_id: trimmed });
+      setAds((prev) => prev.map((a) => a.id === adId ? updated : a));
+      setCampaignIdEdit(null);
+    } catch (err) { alert(err.message); }
+    finally { setCampaignIdSaving(false); }
+  };
 
   const loadMetaAds = async (adId) => {
     setMetaAds((p) => ({ ...p, [adId]: { loading: true, ads: [], error: null } }));
@@ -2742,11 +2769,11 @@ function ManageTab({ ads, metaConnection }) {
 
   if (metaCampaigns.length === 0) {
     return (
-      <SectionCard title="Manage Meta Ads" subtitle="No campaigns distributed to Meta yet">
+      <SectionCard title="Manage Meta Ads" subtitle="No published campaigns found">
         <div className="flex flex-col items-center py-12 gap-3">
           <TrendingUp size={36} style={{ color: "var(--color-sidebar-text)", opacity: 0.4 }} />
           <p className="text-sm" style={{ color: "var(--color-sidebar-text)" }}>
-            Upload a campaign to Meta from the Upload Ads tab to manage its ads here.
+            Publish a campaign first, then upload it to Meta from the Upload Ads tab.
           </p>
         </div>
       </SectionCard>
@@ -2764,7 +2791,7 @@ function ManageTab({ ads, metaConnection }) {
           <SectionCard
             key={ad.id}
             title={ad.title}
-            subtitle={`Campaign ID: ${campaignId} · ${state?.ads?.length ?? "–"} ads`}
+            subtitle={campaignId ? `Campaign ID: ${campaignId} · ${state?.ads?.length ?? "–"} ads` : "No campaign ID — click Edit Campaign ID to set one"}
           >
             {/* Action bar */}
             <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center" }}>
@@ -2804,7 +2831,45 @@ function ManageTab({ ads, metaConnection }) {
               >
                 <ExternalLink size={12} /> Ads Manager
               </a>
+              <button
+                className="btn--inline-action--ghost"
+                onClick={() => openCampaignIdEdit(ad)}
+                style={{ borderColor: "#6366f144", color: "#6366f1" }}
+              >
+                <Pencil size={12} /> Edit Campaign ID
+              </button>
             </div>
+
+            {/* Campaign ID inline editor */}
+            {campaignIdEdit === ad.id && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, padding: "10px 12px", background: "var(--color-input-bg)", borderRadius: 8, border: "1px solid #6366f144" }}>
+                <span style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)", whiteSpace: "nowrap" }}>Meta Campaign ID:</span>
+                <input
+                  value={campaignIdInput}
+                  onChange={(e) => setCampaignIdInput(e.target.value)}
+                  placeholder="e.g. 120210123456789"
+                  style={{ flex: 1, padding: "5px 10px", borderRadius: 6, fontSize: "0.82rem", border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-input-bg)", color: "var(--color-input-text)", outline: "none", fontFamily: "inherit" }}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveCampaignId(ad.id); if (e.key === "Escape") setCampaignIdEdit(null); }}
+                  autoFocus
+                />
+                <button
+                  className="btn--inline-action--ghost"
+                  onClick={() => saveCampaignId(ad.id)}
+                  disabled={campaignIdSaving}
+                  style={{ borderColor: "#22c55e44", color: "#22c55e", whiteSpace: "nowrap" }}
+                >
+                  {campaignIdSaving ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <CheckCircle2 size={12} />}
+                  Save
+                </button>
+                <button
+                  className="btn--inline-action--ghost"
+                  onClick={() => setCampaignIdEdit(null)}
+                  style={{ padding: "4px 8px" }}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            )}
 
             {/* Active pause schedule windows */}
             {(() => {

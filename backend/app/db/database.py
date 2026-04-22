@@ -126,6 +126,8 @@ async def init_db():
                 # Voice session outbound call tracking
                 "ALTER TABLE voice_sessions ADD COLUMN phone VARCHAR(32);",
                 "ALTER TABLE voice_sessions ADD COLUMN survey_response_id VARCHAR;",
+                # Appointments voice session linking
+                "ALTER TABLE appointments ADD COLUMN voice_session_id VARCHAR;",
             ]
             for stmt in _sqlite_cols:
                 try:
@@ -204,6 +206,8 @@ async def init_db():
             "ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS phone VARCHAR(32);")
         await _add_column_if_missing(conn,
             "ALTER TABLE voice_sessions ADD COLUMN IF NOT EXISTS survey_response_id VARCHAR;")
+        await _add_column_if_missing(conn,
+            "ALTER TABLE appointments ADD COLUMN IF NOT EXISTS voice_session_id VARCHAR;")
 
         # chat_sessions.campaign_id — added after initial table creation.
         await _run_migration(conn,

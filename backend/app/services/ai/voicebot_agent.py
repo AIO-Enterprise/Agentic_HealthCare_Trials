@@ -147,11 +147,20 @@ class VoicebotAgentService:
         ad = await self._get_advertisement(advertisement_id)
         bot_config: Dict[str, Any] = ad.bot_config or {}
 
+        # Fetch company name for first_message
+        company_result = await self.db.execute(
+            select(Company).where(Company.id == ad.company_id)
+        )
+        company = company_result.scalar_one_or_none()
+        company_name = company.name if company else "our organization"
+
         system_prompt = await self._build_system_prompt(ad)
         payload = self._build_agent_payload(
             bot_config, system_prompt,
             trial_location=ad.trial_location,
             advertisement_id=advertisement_id,
+            company_name=company_name,
+            campaign_category=ad.campaign_category,
         )
 
         existing_agent_id = bot_config.get("elevenlabs_agent_id")
@@ -616,6 +625,14 @@ class VoicebotAgentService:
         messaging = strategy.get("messaging", {}) or {}
         executive_summary = strategy.get("executive_summary", "")
 
+        # Fetch company name for first_message template
+        company_result = await self.db.execute(
+            select(Company).where(Company.id == ad.company_id)
+        )
+        company = company_result.scalar_one_or_none()
+        company_name = company.name if company else "our organization"
+        campaign_category = ad.campaign_category or "a health condition"
+
         voices_catalogue = [
             {"id": v["id"], "name": v["name"], "traits": v["traits"]}
             for v in AUSTRALIAN_VOICES
@@ -638,13 +655,13 @@ Select the single best voice for this campaign.
 Also suggest a conversation_style (one of: warm, friendly, casual, professional, empathetic, upbeat)
 and a natural, human-like first_message the agent says when the person picks up.
 
-The first_message must:
-- Sound like a real Australian person calling, not a robot
+The first_message must follow this compliance-focused format:
+- Start with: "Hi, this is [Bot name] with [Organization]."
+- State the purpose: "We're enrolling volunteers for a clinical trial focused on [condition]."
+- Clarify voluntary participation: "Participation is voluntary, and I can explain what's involved if you're interested."
 - Use bracket audio tags like [takes a breath], [short pause] for natural delivery
-- Include natural disfluencies like "um", "uh", "so" to sound human
-- Be warm, conversational, and brief (under 30 words)
-- Include the agent's first name
-- Example: "[takes a breath] Oh, hi there! It's Matilda here. [short pause] So, um, I'm calling about the sleep study — you showed interest and I wanted to have a quick chat if you've got a moment?"
+- Include natural disfluencies like "um", "uh" to sound human
+- Example: "[takes a breath] Hi, this is Matilda with {company_name}. [short pause] We're enrolling volunteers for a clinical trial focused on {campaign_category}. [short pause] Participation is voluntary, and, um, I can explain what's involved if you're interested."
 
 Respond with ONLY a valid JSON object, no markdown:
 {{
@@ -663,7 +680,7 @@ Respond with ONLY a valid JSON object, no markdown:
                 "voice_name": fallback["name"],
                 "reason": "Default recommendation — configure AI API for personalized suggestions.",
                 "conversation_style": fallback["style"],
-                "first_message": f"[takes a breath] Oh, hi there! It's {fallback['name']} here. [short pause] So, um, I'm calling because you showed interest in our study — and I just wanted to have a quick chat if you've got a moment?",
+                "first_message": f"[takes a breath] Hi, this is {fallback['name']} with {company_name}. [short pause] We're enrolling volunteers for a clinical trial focused on {campaign_category}. [short pause] Participation is voluntary, and, um, I can explain what's involved if you're interested.",
             }
 
         client = get_async_client()
@@ -719,6 +736,8 @@ Respond with ONLY a valid JSON object, no markdown:
         system_prompt: str,
         trial_location: Optional[list] = None,
         advertisement_id: Optional[str] = None,
+        company_name: Optional[str] = None,
+        campaign_category: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Map bot_config fields → ElevenLabs agent creation payload.
@@ -755,10 +774,15 @@ Respond with ONLY a valid JSON object, no markdown:
         logger.info("Voice selected: %s (%s) style=%s", selected_profile["name"], voice_id, conversation_style)
 
         voice_name = selected_profile["name"]
+
+        # Build compliance-focused opening message
+        org_name = company_name or "our organization"
+        condition = campaign_category or "a health condition"
+
         first_message = bot_config.get("first_message") or (
-            f"[takes a breath] Oh, hi there! It's {voice_name} here. [short pause] "
-            f"So, um, I'm calling because you showed interest in our study — and I just "
-            f"wanted to have a quick chat if you've got a moment?"
+            f"[takes a breath] Hi, this is {voice_name} with {org_name}. [short pause] "
+            f"We're enrolling volunteers for a clinical trial focused on {condition}. "
+            f"[short pause] Participation is voluntary, and, um, I can explain what's involved if you're interested."
         )
         language = bot_config.get("language", "en")
         agent_name = bot_config.get("bot_name") or voice_name
@@ -1128,9 +1152,9 @@ Respond with ONLY a valid JSON object, no markdown:
             "━━ EXAMPLE RESPONSES — model your delivery on these exactly ━━\n"
             "\n"
             "Opening:\n"
-            "\"[takes a breath] Oh, hi there! It's {bot_name} here, calling from the research team. [short pause] "
-            "So, um, I'm reaching out because you showed interest in our study — and I just wanted to have a quick chat "
-            "to give you a bit more detail about what it's all about, if you've got a moment?\"\n"
+            "\"[takes a breath] Hi, this is {bot_name} with {company_name}. [short pause] "
+            "We're enrolling volunteers for a clinical trial focused on {{condition}}. [short pause] "
+            "Participation is voluntary, and, um, I can explain what's involved if you're interested.\"\n"
             "\n"
             "Describing the study:\n"
             "\"So... this trial is focused on, uh, a treatment that's actually been getting quite a bit of "

@@ -2399,7 +2399,7 @@ function VoicebotPanel({ ad, adId, isPublisher, isStudyCoordinator, onConfigSave
   const cfg     = ad.bot_config || {};
 
   const [voiceId,    setVoiceId]    = useState(cfg.voice_id            || "XrExE9yKIg1WjnnlVkGX"); // default: Matilda (Australian)
-  const [firstMsg,   setFirstMsg]   = useState(cfg.first_message       || "[takes a breath] Oh, hi there! It's Matilda here. [short pause] So, um, I'm calling because you showed interest in our study — and I just wanted to have a quick chat if you've got a moment?");
+  const [firstMsg,   setFirstMsg]   = useState(cfg.first_message       || "[takes a breath] Hi, this is Matilda with [Organization]. [short pause] We're enrolling volunteers for a clinical trial focused on [condition]. [short pause] Participation is voluntary, and, um, I can explain what's involved if you're interested.");
   const [language,   setLanguage]   = useState(cfg.language            || "en");
   const [botName,    setBotName]    = useState(cfg.bot_name            || "");
   const [convStyle,  setConvStyle]  = useState(cfg.conversation_style  || "professional");

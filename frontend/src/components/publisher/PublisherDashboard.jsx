@@ -1055,7 +1055,7 @@ function VoicebotConfig({ ad }) {
   const [form, setForm] = useState({
     bot_name:      existing.bot_name      || "Assistant",
     voice_id:      existing.voice_id      || "XrExE9yKIg1WjnnlVkGX",  // default: Matilda (Australian)
-    first_message: existing.first_message || "Hi! How can I help you today?",
+    first_message: existing.first_message || "[takes a breath] Oh, hi there! It's Matilda here. [short pause] So, um, I'm calling because you showed interest in our study — and I just wanted to have a quick chat if you've got a moment?",
     // conversation_style, language, compliance_notes are set by AI recommendation — not exposed to the user
   });
 
@@ -1373,7 +1373,7 @@ function VoicebotConfig({ ad }) {
             value={form.first_message}
             onChange={(e) => setForm((p) => ({ ...p, first_message: e.target.value }))}
             className="field-input"
-            placeholder="Hi! How can I help you today?"
+            placeholder="[takes a breath] Oh, hi there! It's Matilda here..."
           />
         </div>
       </div>

@@ -617,17 +617,11 @@ class VoicebotAgentService:
         executive_summary = strategy.get("executive_summary", "")
 
         voices_catalogue = [
-            {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Rachel", "traits": "calm, professional, warm female — suits healthcare, B2B, corporate, clinical"},
-            {"id": "pNInz6obpgDQGcFmaJgB", "name": "Adam",   "traits": "deep, authoritative male — suits financial, legal, insurance, executive audiences"},
-            {"id": "oWAxZDx7w5VEj9dCyTzz", "name": "Grace",  "traits": "warm, friendly female — suits consumer wellness, lifestyle, retail, family"},
-            {"id": "TxGEqnHWrfWFTfGW9XjX", "name": "Josh",   "traits": "conversational, relatable male — suits tech, startups, younger demographics"},
-            {"id": "AZnzlk1XvdvUeBnXmlld", "name": "Domi",   "traits": "strong, confident female — suits fitness, empowerment, sports, motivation"},
-            {"id": "VR6AewLTigWG4xSOukaG", "name": "Arnold", "traits": "crisp, clear male — suits education, SaaS, technical product demos"},
-            {"id": "MF3mGyEYCl7XYWbV9V6O", "name": "Elli",   "traits": "bright, energetic female — suits entertainment, youth, e-commerce, events"},
-            {"id": "XB0fDUnXU5powFXDhCwa", "name": "Charlotte", "traits": "sophisticated, composed female — suits luxury, premium brands, fashion, finance"},
+            {"id": v["id"], "name": v["name"], "traits": v["traits"]}
+            for v in AUSTRALIAN_VOICES
         ]
 
-        prompt = f"""You are a voice casting expert for AI voice agents used in marketing campaigns.
+        prompt = f"""You are a voice casting expert for AI voice agents used in Australian clinical trial recruitment campaigns.
 
 Campaign summary: {executive_summary}
 
@@ -637,12 +631,20 @@ Target audience:
 Messaging tone: {messaging.get("tone", "N/A")}
 Core message: {messaging.get("core_message", "N/A")}
 
-Available voices:
+Available voices (all Australian accents):
 {json.dumps(voices_catalogue, indent=2)}
 
-Based on the target audience demographics, tone, and campaign goals, select the single best voice.
-Also suggest a conversation_style (one of: professional, friendly, casual, formal, empathetic, energetic)
-and a natural first_message the agent should say when a user picks up.
+Select the single best voice for this campaign.
+Also suggest a conversation_style (one of: warm, friendly, casual, professional, empathetic, upbeat)
+and a natural, human-like first_message the agent says when the person picks up.
+
+The first_message must:
+- Sound like a real Australian person calling, not a robot
+- Use bracket audio tags like [takes a breath], [short pause] for natural delivery
+- Include natural disfluencies like "um", "uh", "so" to sound human
+- Be warm, conversational, and brief (under 30 words)
+- Include the agent's first name
+- Example: "[takes a breath] Oh, hi there! It's Matilda here. [short pause] So, um, I'm calling about the sleep study — you showed interest and I wanted to have a quick chat if you've got a moment?"
 
 Respond with ONLY a valid JSON object, no markdown:
 {{
@@ -650,19 +652,18 @@ Respond with ONLY a valid JSON object, no markdown:
   "voice_name": "<name>",
   "reason": "<one sentence explaining why this voice fits this audience>",
   "conversation_style": "<style>",
-  "first_message": "<opening line the agent says, max 20 words>"
+  "first_message": "<opening line with bracket audio tags and disfluencies>"
 }}"""
 
         if not is_configured():
-            # Fallback: pick Rachel for professional, Josh for casual, etc.
             tone = (messaging.get("tone") or "").lower()
-            fallback = voices_catalogue[3] if "casual" in tone or "young" in tone else voices_catalogue[0]
+            fallback = AUSTRALIAN_VOICES[1] if "casual" in tone or "young" in tone else AUSTRALIAN_VOICES[0]
             return {
                 "voice_id": fallback["id"],
                 "voice_name": fallback["name"],
                 "reason": "Default recommendation — configure AI API for personalized suggestions.",
-                "conversation_style": "professional",
-                "first_message": "Hi! How can I help you today?",
+                "conversation_style": fallback["style"],
+                "first_message": f"[takes a breath] Oh, hi there! It's {fallback['name']} here. [short pause] So, um, I'm calling because you showed interest in our study — and I just wanted to have a quick chat if you've got a moment?",
             }
 
         client = get_async_client()
@@ -753,11 +754,14 @@ Respond with ONLY a valid JSON object, no markdown:
         voice_settings = selected_profile["settings"]
         logger.info("Voice selected: %s (%s) style=%s", selected_profile["name"], voice_id, conversation_style)
 
-        first_message = bot_config.get(
-            "first_message", "Hello! How can I help you today?"
+        voice_name = selected_profile["name"]
+        first_message = bot_config.get("first_message") or (
+            f"[takes a breath] Oh, hi there! It's {voice_name} here. [short pause] "
+            f"So, um, I'm calling because you showed interest in our study — and I just "
+            f"wanted to have a quick chat if you've got a moment?"
         )
         language = bot_config.get("language", "en")
-        agent_name = bot_config.get("bot_name", "Marketing Assistant")
+        agent_name = bot_config.get("bot_name") or voice_name
 
         # Booking webhook tool — ElevenLabs calls this mid-call when the agent
         # decides to book a screening appointment for an eligible candidate.
@@ -848,7 +852,13 @@ Respond with ONLY a valid JSON object, no markdown:
         messaging   : Dict[str, Any] = strategy.get("messaging") or {}
         messaging = messaging if isinstance(messaging, dict) else {}
 
-        bot_name   = bot_config.get("name", "Assistant")
+        publisher_voice_id = bot_config.get("voice_id")
+        _voice_profile = (
+            next((v for v in AUSTRALIAN_VOICES if v["id"] == publisher_voice_id), AUSTRALIAN_VOICES[0])
+            if publisher_voice_id
+            else _voice_for_style(bot_config.get("conversation_style", "warm"))
+        )
+        bot_name   = bot_config.get("bot_name") or bot_config.get("name") or _voice_profile["name"]
         style      = bot_config.get("conversation_style", "professional and helpful")
         compliance = bot_config.get("compliance_notes", "")
         first_msg  = bot_config.get("first_message", "")
@@ -1055,83 +1065,92 @@ Respond with ONLY a valid JSON object, no markdown:
 
         sections.append(
             "## Voice & Delivery Rules\n"
-            "You are speaking live on a phone call — not typing. Every word you write will be spoken aloud.\n"
+            "You are speaking live on a phone call — not typing. Every word you say will be spoken aloud.\n"
             f"{accent_note}\n"
-            "- Maximum 2 sentences per turn. Never 3.\n"
+            "- Keep turns short and conversational. 2–3 sentences max. Let the caller breathe.\n"
             "- No bullet points, lists, markdown, headers, or punctuation names.\n"
-            "- Contractions always: 'you're', 'it's', 'we've', 'that's'. Never formal equivalents.\n"
+            "- Contractions always: 'you're', 'it's', 'we've', 'that's'. Never the formal equivalents.\n"
             "- Never fabricate trial data, dates, or medical claims.\n"
             "- If you don't know something, say so warmly and offer a human follow-up.\n"
             "\n"
-            "## Audio Tags & Emotional Delivery — READ THIS CAREFULLY\n"
-            "ElevenLabs v3 renders the following natively. You MUST use them in every response.\n"
+            "## Audio Expression & Human-Like Delivery — READ THIS CAREFULLY\n"
+            "Your goal is to sound indistinguishable from a real Australian person on the phone.\n"
+            "ElevenLabs v3 renders square-bracket audio tags and responds to vocal disfluencies naturally.\n"
+            "You MUST use both in every single response.\n"
             "\n"
-            "━━ PAUSES (the only XML tag supported) ━━\n"
-            "Use <break time=\"Xs\" /> to create natural breath and rhythm:\n"
-            "  • <break time=\"0.15s\" />  — micro-pause, comma-level beat between two thoughts\n"
-            "  • <break time=\"0.35s\" />  — breath pause after a greeting or before shifting topic\n"
-            "  • <break time=\"0.6s\" />   — thinking pause before asking a question\n"
-            "  • <break time=\"1.0s\" />   — meaningful silence after delivering important news\n"
-            "Rules: never mid-word; never inside a proper noun; every single response MUST have at least one.\n"
+            "━━ AUDIO EXPRESSION TAGS (square brackets — ElevenLabs v3 renders these) ━━\n"
+            "Use these to inject physical vocal cues:\n"
+            "  [takes a breath]    — before starting a new thought or after a long sentence\n"
+            "  [short pause]       — mid-sentence beat, natural hesitation\n"
+            "  [long pause]        — meaningful silence, e.g. after asking a big question\n"
+            "  [light chuckle]     — warm, soft laugh — NOT for medical or sensitive topics\n"
+            "  [laughs softly]     — a little warmer than light chuckle, more genuine\n"
+            "  [sighs softly]      — empathetic exhale, e.g. when someone shares a struggle\n"
+            "  [clears throat]     — subtle reset, e.g. before delivering important information\n"
+            "  [exhales]           — relief or warmth after a good moment in the conversation\n"
             "\n"
-            "━━ EMOTIONS — written as natural spoken text (NOT in square brackets) ━━\n"
-            "ElevenLabs v3 reads emotional cues from the actual words — write what a human would say:\n"
+            "Rules:\n"
+            "  • Use 1–3 tags per response — don't over-stack them\n"
+            "  • NEVER use tags mid-word or inside proper nouns\n"
+            "  • NEVER use [light chuckle] or [laughs softly] when discussing ineligibility, medical risks, or distress\n"
             "\n"
-            "  WARMTH / LAUGHTER:\n"
-            "  • 'Ha!'          — short genuine laugh, e.g. when caller says something funny\n"
-            "  • 'Haha,'        — relaxed laughter flowing into the next sentence\n"
-            "  • 'Heh,'         — soft private chuckle, self-aware and warm\n"
-            "  • 'Ha, yeah,'    — laughing agreement\n"
+            "━━ VOCAL DISFLUENCIES & FILLER WORDS (write them — the model voices them naturally) ━━\n"
+            "These make you sound like a real person, not a script-reader. Sprinkle them in:\n"
             "\n"
-            "  EMPATHY / ACTIVE LISTENING:\n"
-            "  • 'Oh, I hear ya.' — genuine acknowledgement of frustration or struggle\n"
-            "  • 'Mmm,'          — warm 'I understand', flows into next sentence\n"
-            "  • 'Ah,'           — realisation or gentle surprise\n"
-            "  • 'Oh wow,'       — positive surprise, use sparingly\n"
-            "  • 'Yeah, absolutely.' — affirming agreement\n"
+            "  THINKING / HESITATION:\n"
+            "  • 'So...'           — trailing thought, natural transition\n"
+            "  • 'um,'  'uh,'      — genuine mid-sentence thinking pause\n"
+            "  • 'I mean,'         — self-correction or clarification\n"
+            "  • 'right,'          — soft acknowledgement before moving on\n"
+            "  • 'you know,'       — casual connection with the listener\n"
             "\n"
-            "  ENCOURAGEMENT:\n"
+            "  WARMTH & ACTIVE LISTENING:\n"
+            "  • 'Mmm,'            — 'I hear you', warm and present\n"
+            "  • 'Ah,'             — realisation or gentle surprise\n"
+            "  • 'Oh,'             — natural reaction, soft\n"
+            "  • 'Oh wow,'         — positive surprise, use sparingly\n"
+            "  • 'Yeah, yeah,'     — active listening, flowing agreement\n"
+            "  • 'Oh, I hear ya.'  — genuine empathy for frustration or struggle\n"
+            "\n"
+            "  ENCOURAGEMENT (Australian-natural):\n"
             "  • 'That's great!'   — genuine positive reaction\n"
-            "  • 'Brilliant!'      — Australian-natural enthusiasm\n"
-            "  • 'Good on ya!'     — warm Australian affirmation, use max once per call\n"
-            "  • 'No worries at all.' — reassurance\n"
-            "\n"
-            "  THINKING / NATURAL FILLER:\n"
-            "  • 'So,'            — transition, casual and natural\n"
-            "  • 'Right,'         — acknowledgement before pivoting\n"
-            "  • 'Look,'          — Australian-natural soft emphasis opener\n"
+            "  • 'Brilliant!'      — enthusiastic but not over the top\n"
+            "  • 'Good on ya!'     — warm affirmation, use max once per call\n"
+            "  • 'No worries at all.' — reassurance after a concern\n"
+            "  • 'Look,'           — soft Aussie emphasis opener before making a point\n"
             "\n"
             "━━ HARD RULES ━━\n"
-            "  ✗ NEVER write [laughs], [chuckles], [giggles], [sighs] — read literally as words\n"
-            "  ✗ NEVER write <emphasis>, <prosody>, or any XML tag except <break time=\"Xs\" />\n"
-            "  ✗ NEVER use warmth sounds when discussing medical conditions, ineligibility, or distress\n"
-            "  ✓ Every response: at least one <break>, at least one emotional word or phrase\n"
+            "  ✗ NEVER use <break>, <emphasis>, <prosody>, or any XML tag — use bracket tags instead\n"
+            "  ✗ NEVER skip audio tags entirely — every response needs at least one\n"
+            "  ✗ NEVER skip filler words entirely — every response needs at least one\n"
+            "  ✗ NEVER sound like you're reading from a script — vary your sentence rhythm\n"
             "\n"
-            "━━ EXAMPLE RESPONSES ━━\n"
+            "━━ EXAMPLE RESPONSES — model your delivery on these exactly ━━\n"
             "\n"
             "Opening:\n"
-            "\"G'day! <break time=\"0.35s\" /> Thanks so much for your interest in the Sleep Trials study — "
-            "really glad you called. <break time=\"0.6s\" /> Mind if I ask you a couple of quick questions "
-            "to see if it might be a good fit?\"\n"
+            "\"[takes a breath] Oh, hi there! It's {bot_name} here, calling from the research team. [short pause] "
+            "So, um, I'm reaching out because you showed interest in our study — and I just wanted to have a quick chat "
+            "to give you a bit more detail about what it's all about, if you've got a moment?\"\n"
+            "\n"
+            "Describing the study:\n"
+            "\"So... this trial is focused on, uh, a treatment that's actually been getting quite a bit of "
+            "attention lately. [light chuckle] You've probably seen a thing or two about it in the media. "
+            "[short pause] Basically, it's designed to help with — right — managing blood sugar and weight.\"\n"
             "\n"
             "Empathy moment:\n"
-            "\"Oh, I hear ya — <break time=\"0.2s\" /> those 3am wake-ups are genuinely exhausting. "
-            "<break time=\"0.5s\" /> That's actually exactly who this study is designed to help.\"\n"
+            "\"Mmm, yeah — [sighs softly] those 3am wake-ups are genuinely exhausting, I imagine. "
+            "[short pause] That's actually exactly who this study is designed to help, so — you know — "
+            "you're in the right place.\"\n"
             "\n"
-            "Warm laugh:\n"
-            "\"Haha, yeah, <break time=\"0.15s\" /> I think a lot of Aussies can relate to that! "
-            "<break time=\"0.4s\" /> So let me ask — how long has this been going on for you?\"\n"
+            "Warm reaction to good news:\n"
+            "\"Oh, that's brilliant! [exhales] Based on everything you've told me, you sound like a really "
+            "wonderful fit. [long pause] The team will be in touch very soon — no worries at all.\"\n"
             "\n"
-            "Good news delivery:\n"
-            "\"That's great! <break time=\"0.35s\" /> Based on everything you've told me, "
-            "you sound like a brilliant fit. <break time=\"1.0s\" /> The team will be in touch "
-            "very soon to confirm your spot.\"\n"
-            "\n"
-            "Ineligibility (no warmth sounds here):\n"
-            "\"Thank you so much for your time. <break time=\"0.5s\" /> Unfortunately this particular study "
-            "isn't the right match, but there may be other trials that suit you better — "
-            "the team can help point you in the right direction.\""
-        )
+            "Ineligibility — empathetic, no chuckles:\n"
+            "\"[takes a breath] Thank you so much for your time, genuinely. [short pause] Unfortunately, "
+            "um, this particular study isn't quite the right match — but look, there may be other trials "
+            "that suit you better, and the team can help point you in the right direction.\""
+        ).format(bot_name=bot_name)
 
         return "\n\n".join(sections)
 

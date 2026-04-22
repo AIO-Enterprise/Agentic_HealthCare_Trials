@@ -1093,7 +1093,7 @@ function BudgetDonut({ strategy }) {
         {slices.map((s) => (
           <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: s.color, flexShrink: 0 }} />
-            <p style={{ flex: 1, fontSize: "0.76rem", color: "var(--color-input-text)", fontWeight: 500, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <p style={{ flex: 1, fontSize: "0.76rem", color: "var(--color-input-text)", fontWeight: 500, margin: 0, lineHeight: 1.4 }}>
               {s.label.replace(/_/g, " ")}
             </p>
             <p style={{ fontSize: "0.82rem", fontWeight: 800, color: s.color, flexShrink: 0, margin: 0 }}>{s.pct}%</p>

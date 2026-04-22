@@ -85,7 +85,13 @@ async def submit_survey_response(
     )
     db.add(response)
     await db.flush()
-    return response
+
+    refreshed = await db.execute(
+        select(SurveyResponse)
+        .where(SurveyResponse.id == response.id)
+        .options(selectinload(SurveyResponse.voice_sessions))
+    )
+    return refreshed.scalar_one()
 
 
 # ── List responses (study coordinator, company-scoped) ─────────────────────────

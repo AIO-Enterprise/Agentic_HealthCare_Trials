@@ -815,3 +815,7 @@ export const surveyAPI = {
   syncTranscripts: (adId) =>
     request(`/advertisements/${adId}/sync-voice-transcripts`, { method: "POST" }),
 };
+
+export const appointmentsAPI = {
+  list: (adId) => request(`/advertisements/${adId}/appointments`),
+};

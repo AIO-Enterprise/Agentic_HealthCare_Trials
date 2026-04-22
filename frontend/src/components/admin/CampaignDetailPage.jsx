@@ -23,7 +23,7 @@
 import React, { useState, useEffect, useCallback, useRef, Component } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { PageWithSidebar, SectionCard, CampaignStatusBadge } from "../shared/Layout";
-import { adsAPI, companyAPI, surveyAPI } from "../../services/api";
+import { adsAPI, companyAPI, surveyAPI, appointmentsAPI } from "../../services/api";
 import {
   ArrowLeft, Megaphone, Globe, Image, Bot, MessageSquare,
   FileText, Check, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
@@ -3145,6 +3145,7 @@ function CampaignDetailPageInner() {
   const [participants,     setParticipants]     = useState([]);
   const [participantsLoading, setParticipantsLoading] = useState(false);
   const [selectedParticipant, setSelectedParticipant] = useState(null);
+  const [participantAppointments, setParticipantAppointments] = useState([]);
   const [syncingTranscripts,  setSyncingTranscripts]  = useState(false);
   const [syncResult,          setSyncResult]          = useState(null);
   // Voicebot conversation history (loaded in participants tab for voicebot campaigns)
@@ -4086,30 +4087,21 @@ function CampaignDetailPageInner() {
       {/* ══ QUESTIONNAIRE tab ═════════════════════════════════════════════════ */}
       {pageTab === "questionnaire" && (
         <div>
-          {qualifies ? (
-            <>
-              <div style={{ marginBottom: 20 }}>
-                <h2 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--color-input-text)", margin: 0 }}>
-                  Eligibility Questionnaire
-                </h2>
-                <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)", marginTop: 4 }}>
-                  {ad.campaign_category ? ad.campaign_category.replace("_", " ") + " campaign" : "Detected from campaign title"} — define the questions participants will answer
-                </p>
-              </div>
-              <QuestionnaireSection
-                adId={id}
-                questionnaire={ad.questionnaire}
-                readOnly={isPublisher}
-                showAI={isStudyCoordinator}
-                onSaved={load}
-              />
-            </>
-          ) : (
-            <div style={{ textAlign: "center", padding: "48px 0" }}>
-              <ClipboardList size={32} style={{ color: "var(--color-card-border)", margin: "0 auto 12px" }} />
-              <p style={{ color: "var(--color-sidebar-text)", fontSize: "0.9rem" }}>This campaign type does not require a questionnaire.</p>
-            </div>
-          )}
+          <div style={{ marginBottom: 20 }}>
+            <h2 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--color-input-text)", margin: 0 }}>
+              Eligibility Questionnaire
+            </h2>
+            <p style={{ fontSize: "0.78rem", color: "var(--color-sidebar-text)", marginTop: 4 }}>
+              {ad.campaign_category ? ad.campaign_category.replace("_", " ") + " campaign" : "Campaign"} — define the questions participants will answer
+            </p>
+          </div>
+          <QuestionnaireSection
+            adId={id}
+            questionnaire={ad.questionnaire}
+            readOnly={isPublisher}
+            showAI={isStudyCoordinator}
+            onSaved={load}
+          />
         </div>
       )}
 
@@ -4203,7 +4195,7 @@ function CampaignDetailPageInner() {
               subtitle={`Submitted ${new Date(selectedParticipant.created_at).toLocaleString()}`}
             >
               <button
-                onClick={() => setSelectedParticipant(null)}
+                onClick={() => { setSelectedParticipant(null); setParticipantAppointments([]); }}
                 className="btn--ghost"
                 style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.8rem", marginBottom: 20 }}
               >
@@ -4287,6 +4279,32 @@ function CampaignDetailPageInner() {
                       )}
                     </div>
                   ))}
+                </div>
+              )}
+
+              {/* Appointment details */}
+              {participantAppointments.length > 0 && (
+                <div style={{ marginBottom: 24 }}>
+                  <p style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>
+                    Appointments
+                  </p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {participantAppointments.map((appt) => (
+                      <div key={appt.id} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12, padding: "14px 16px", borderRadius: 10, border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)" }}>
+                        {[
+                          { label: "Date",     value: new Date(appt.slot_datetime).toLocaleDateString() },
+                          { label: "Time",     value: new Date(appt.slot_datetime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) },
+                          { label: "Duration", value: `${appt.duration_minutes} min` },
+                          { label: "Status",   value: appt.status.charAt(0).toUpperCase() + appt.status.slice(1) },
+                        ].map(({ label, value }) => (
+                          <div key={label}>
+                            <p style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--color-sidebar-text)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>{label}</p>
+                            <p style={{ fontSize: "0.88rem", fontWeight: 600, color: appt.status === "confirmed" && label === "Status" ? "#16a34a" : appt.status === "cancelled" && label === "Status" ? "#dc2626" : "var(--color-input-text)" }}>{value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -4379,7 +4397,13 @@ function CampaignDetailPageInner() {
                   {participants.map((p, idx) => (
                     <div
                       key={p.id}
-                      onClick={() => setSelectedParticipant(p)}
+                      onClick={() => {
+                        setSelectedParticipant(p);
+                        setParticipantAppointments([]);
+                        appointmentsAPI.list(id)
+                          .then((all) => setParticipantAppointments((all || []).filter((a) => a.survey_response_id === p.id)))
+                          .catch(() => {});
+                      }}
                       style={{
                         display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1.5fr 1fr 32px 40px",
                         gap: 0, padding: "12px 16px", cursor: "pointer",

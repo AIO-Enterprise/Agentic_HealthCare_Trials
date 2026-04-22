@@ -4420,8 +4420,9 @@ function CampaignDetailPageInner() {
                 </div>
               )}
             </SectionCard>
+          )}
 
-            {/* Conversation History — voicebot campaigns only */}
+          {/* Conversation History — voicebot campaigns only */}
             {ad.ad_type?.includes("voicebot") && (
               <SectionCard title="Conversation History" subtitle="Past voice sessions from the voicebot">
                 {convHistoryLoading ? (
@@ -4513,7 +4514,6 @@ function CampaignDetailPageInner() {
                 </div>
               </SectionCard>
             )}
-          </div>
         </div>
       )}
 

@@ -365,6 +365,7 @@ class VoiceSession(Base):
     advertisement   = relationship("Advertisement", back_populates="voice_sessions")
     transcripts     = relationship("CallTranscript", back_populates="session", cascade="all, delete-orphan")
     survey_response = relationship("SurveyResponse", back_populates="voice_sessions", foreign_keys=[survey_response_id])
+    booking         = relationship("BookingAppointment", back_populates="voice_session", uselist=False)
 
 
 # ─── Platform Connections ─────────────────────────────────────────────────────

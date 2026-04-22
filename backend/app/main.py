@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 
 from app.db.database import init_db
 from app.api.routes import auth, onboarding, users, advertisements, documents, analytics, brand_kit, company
-from app.api.routes import chat, survey_responses
+from app.api.routes import chat, bookings, survey_responses
 from app.api.routes import platform_connections
 from app.api.routes import bookings
 from app.core.config import settings
@@ -108,6 +108,7 @@ app.include_router(analytics.router,      prefix="/api")
 app.include_router(brand_kit.router,      prefix="/api")
 app.include_router(company.router,        prefix="/api")
 app.include_router(chat.router,             prefix="/api")
+app.include_router(bookings.router,         prefix="/api")
 app.include_router(survey_responses.router, prefix="/api")
 app.include_router(platform_connections.router,  prefix="/api")
 app.include_router(bookings.router,              prefix="/api")

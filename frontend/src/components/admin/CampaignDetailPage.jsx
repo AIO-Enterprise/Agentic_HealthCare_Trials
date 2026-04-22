@@ -40,8 +40,14 @@ const QUESTIONNAIRE_CATEGORIES = new Set(["recruitment", "hiring", "survey", "cl
 const QUESTIONNAIRE_KEYWORDS = ["hiring", "recruit", "survey", "clinical", "trial", "research study", "job posting", "job opening", "application", "vacancy", "vacancies", "applicant", "enroll", "enrolment", "participant", "respondent"];
 
 /** Check protocol doc titles first (strongest signal), fall back to campaign title. */
-function needsQuestionnaire(ad) {
-  return !!ad;
+function needsQuestionnaire(ad, protoDocs) {
+  if (!ad) return false;
+  if (QUESTIONNAIRE_CATEGORIES.has(ad.campaign_category)) return true;
+  const titles = [
+    ad.title || "",
+    ...(protoDocs || []).map((d) => d.title || ""),
+  ].join(" ").toLowerCase();
+  return QUESTIONNAIRE_KEYWORDS.some((kw) => titles.includes(kw));
 }
 
 // ─── Protocol document preview modal ─────────────────────────────────────────
@@ -292,7 +298,7 @@ function QuestionnaireSection({ adId, questionnaire, readOnly, showAI = true, on
     try {
       const res = await adsAPI.rewriteQuestion(adId, q, state.prompt.trim());
       const updated = res.question;
-      setQuestions((prev) => prev.map((item) => item.id === q.id ? { ...updated, id: q.id } : item));
+      setQuestions((prev) => prev.map((item) => item.id === q.id ? { ...item, ...updated, id: q.id } : item));
       setRewriteStates((prev) => ({ ...prev, [q.id]: { open: false, prompt: "", loading: false, error: null } }));
     } catch (err) {
       setRewriteStates((prev) => ({ ...prev, [q.id]: { ...prev[q.id], loading: false, error: err.message || "Rewrite failed." } }));
@@ -2126,16 +2132,13 @@ class DetailErrorBoundary extends Component {
   }
 }
 
-// ─── ElevenLabs voice catalogue (mirrors voicebot_agent.py) ──────────────────
+// ─── Australian ElevenLabs voice catalogue (mirrors AUSTRALIAN_VOICES in voicebot_agent.py) ──
 const VOICE_CATALOGUE = [
-  { id: "EXAVITQu4vr4xnSDxMaL", name: "Rachel",    desc: "Calm · professional · warm female" },
-  { id: "pNInz6obpgDQGcFmaJgB", name: "Adam",      desc: "Deep · authoritative male" },
-  { id: "oWAxZDx7w5VEj9dCyTzz", name: "Grace",     desc: "Warm · friendly female" },
-  { id: "TxGEqnHWrfWFTfGW9XjX", name: "Josh",      desc: "Conversational · relatable male" },
-  { id: "AZnzlk1XvdvUeBnXmlld", name: "Domi",      desc: "Strong · confident female" },
-  { id: "VR6AewLTigWG4xSOukaG", name: "Arnold",    desc: "Crisp · clear male" },
-  { id: "MF3mGyEYCl7XYWbV9V6O", name: "Elli",      desc: "Bright · energetic female" },
-  { id: "XB0fDUnXU5powFXDhCwa", name: "Charlotte", desc: "Sophisticated · composed female" },
+  { id: "XrExE9yKIg1WjnnlVkGX", name: "Matilda", desc: "Warm · friendly · Australian female" },
+  { id: "IKne3meq5aSn9XLyUdCD", name: "Charlie", desc: "Casual · approachable · Australian male" },
+  { id: "FGY2WhTYpPnrIDTdsKH5", name: "Laura",   desc: "Upbeat · energetic · Australian female" },
+  { id: "iP95p4xoKVk53GoZ742B", name: "Chris",   desc: "Professional · measured · Australian male" },
+  { id: "pFZP5JQG7iQjIQuC4Bku", name: "Aimee",  desc: "Friendly · natural · Australian female" },
 ];
 const CONV_STYLES = ["professional", "friendly", "casual", "formal", "empathetic", "energetic"];
 const VOICE_LANGUAGES = [
@@ -2402,8 +2405,8 @@ function VoicebotPanel({ ad, adId, isPublisher, isStudyCoordinator, onConfigSave
   const canEdit = isPublisher || isStudyCoordinator;
   const cfg     = ad.bot_config || {};
 
-  const [voiceId,    setVoiceId]    = useState(cfg.voice_id            || "EXAVITQu4vr4xnSDxMaL");
-  const [firstMsg,   setFirstMsg]   = useState(cfg.first_message       || "Hello! How can I help you today?");
+  const [voiceId,    setVoiceId]    = useState(cfg.voice_id            || "XrExE9yKIg1WjnnlVkGX"); // default: Matilda (Australian)
+  const [firstMsg,   setFirstMsg]   = useState(cfg.first_message       || "[takes a breath] Hi, this is Matilda with [Organization]. [short pause] We're enrolling volunteers for a clinical trial focused on [condition]. [short pause] Participation is voluntary, and, um, I can explain what's involved if you're interested.");
   const [language,   setLanguage]   = useState(cfg.language            || "en");
   const [botName,    setBotName]    = useState(cfg.bot_name            || "");
   const [convStyle,  setConvStyle]  = useState(cfg.conversation_style  || "professional");
@@ -3251,7 +3254,7 @@ function CampaignDetailPageInner() {
         .catch(() => setConvHistory([]))
         .finally(() => setConvHistoryLoading(false));
     }
-  }, [pageTab, id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pageTab, id, ad?.ad_type]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSelectConvHistory = async (conv) => {
     if (selectedConvHistory?.conversation_id === conv.conversation_id) {
@@ -3398,8 +3401,8 @@ function CampaignDetailPageInner() {
     setWebsiteLoading(true); setWebsiteError(null);
     genProgress.start("Building landing page…", 120000);
     try {
+      const prevUrl = ad?.output_url;
       const triggered = await adsAPI.generateWebsite(id);
-      const prevUrl = triggered.output_url;
       // Backend returns immediately; poll until the background task commits.
       // Website gen is slower than creatives (Claude + image + EFS write) → 10 min.
       const updated = await pollUntilUpdated(id, triggered.updated_at, 600_000);
@@ -4446,8 +4449,9 @@ function CampaignDetailPageInner() {
                 </div>
               )}
             </SectionCard>
+          )}
 
-            {/* Conversation History — voicebot campaigns only */}
+          {/* Conversation History — voicebot campaigns only */}
             {ad.ad_type?.includes("voicebot") && (
               <SectionCard title="Conversation History" subtitle="Past voice sessions from the voicebot">
                 {convHistoryLoading ? (

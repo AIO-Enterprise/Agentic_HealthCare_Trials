@@ -655,13 +655,13 @@ Select the single best voice for this campaign.
 Also suggest a conversation_style (one of: warm, friendly, casual, professional, empathetic, upbeat)
 and a natural, human-like first_message the agent says when the person picks up.
 
-The first_message must follow this compliance-focused format:
-- Start with: "Hi, this is [Bot name] with [Organization]."
-- State the purpose: "We're enrolling volunteers for a clinical trial focused on [condition]."
-- Clarify voluntary participation: "Participation is voluntary, and I can explain what's involved if you're interested."
+The first_message must follow this exact standardized format:
+- Start with: "Hi. This is [Bot name] from [company name]."
+- Express gratitude: "Thanks a lot for expressing interest in our study."
+- Engage warmly: "How are you doing today?"
 - Use bracket audio tags like [takes a breath], [short pause] for natural delivery
-- Include natural disfluencies like "um", "uh" to sound human
-- Example: "[takes a breath] Hi, this is Matilda with {company_name}. [short pause] We're enrolling volunteers for a clinical trial focused on {campaign_category}. [short pause] Participation is voluntary, and, um, I can explain what's involved if you're interested."
+- Include natural disfluencies like "um" to sound human
+- Example: "[takes a breath] Hi. This is Matilda from {company_name}. [short pause] Thanks a lot for expressing interest in our study. [pause] How are you doing today?"
 
 Respond with ONLY a valid JSON object, no markdown:
 {{
@@ -680,7 +680,7 @@ Respond with ONLY a valid JSON object, no markdown:
                 "voice_name": fallback["name"],
                 "reason": "Default recommendation — configure AI API for personalized suggestions.",
                 "conversation_style": fallback["style"],
-                "first_message": f"[takes a breath] Hi, this is {fallback['name']} with {company_name}. [short pause] We're enrolling volunteers for a clinical trial focused on {campaign_category}. [short pause] Participation is voluntary, and, um, I can explain what's involved if you're interested.",
+                "first_message": f"[takes a breath] Hi. This is {fallback['name']} from {company_name}. [short pause] Thanks a lot for expressing interest in our study. [pause] How are you doing today?",
             }
 
         client = get_async_client()
@@ -780,9 +780,9 @@ Respond with ONLY a valid JSON object, no markdown:
         condition = campaign_category or "a health condition"
 
         first_message = bot_config.get("first_message") or (
-            f"[takes a breath] Hi, this is {voice_name} with {org_name}. [short pause] "
-            f"We're enrolling volunteers for a clinical trial focused on {condition}. "
-            f"[short pause] Participation is voluntary, and, um, I can explain what's involved if you're interested."
+            f"[takes a breath] Hi. This is {voice_name} from {org_name}. [short pause] "
+            f"Thanks a lot for expressing interest in our study. [pause] "
+            f"How are you doing today?"
         )
         language = bot_config.get("language", "en")
         agent_name = bot_config.get("bot_name") or voice_name
@@ -836,7 +836,7 @@ Respond with ONLY a valid JSON object, no markdown:
                     "voice_settings":             voice_settings,
                 },
                 "asr": {
-                    "quality": "balanced",  # Faster processing (high → balanced)
+                    "quality": "high",  # ElevenLabs only accepts "high"
                     "user_input_audio_format": "pcm_16000",
                 },
                 "turn_detection": {

@@ -69,14 +69,11 @@
 
 #### 4. ASR Quality (Line 839)
 ```python
-# BEFORE:
-"quality": "high",
-
-# AFTER:
-"quality": "balanced",  # Faster processing
+# KEPT AS:
+"quality": "high",  # ElevenLabs only accepts "high" - no other values supported
 ```
 
-**Impact:** MEDIUM - Reduces transcription latency by ~100-150ms with minimal accuracy loss.
+**Impact:** NONE - ElevenLabs API validation requires "high" as the only valid value.
 
 ---
 
@@ -177,9 +174,9 @@ onInterrupt: function() {
 | **Server VAD Detection** | 700ms | 500ms | -200ms (28%) |
 | **Prefix Padding** | 200ms | 150ms | -50ms (25%) |
 | **TTS Generation** | ~300ms | ~200ms | -100ms (33%) |
-| **ASR Transcription** | ~250ms | ~150ms | -100ms (40%) |
+| **ASR Transcription** | ~250ms | ~250ms | No change (API limitation) |
 | **Client-side Detection** | N/A | 50ms | NEW! |
-| **Total Pipeline Latency** | 600-1250ms | 200-500ms | **60-75% faster** |
+| **Total Pipeline Latency** | 600-1250ms | 300-600ms | **50-65% faster** |
 
 ### Voice Overlap Reduction
 

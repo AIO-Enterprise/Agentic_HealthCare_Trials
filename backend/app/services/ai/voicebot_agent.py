@@ -831,7 +831,7 @@ Respond with ONLY a valid JSON object, no markdown:
                 "tts": {
                     "voice_id":                  voice_id,
                     "model_id":                  settings.ELEVENLABS_TTS_MODEL,
-                    "optimize_streaming_latency": 4,  # Maximum latency optimization (3 → 4)
+                    "optimize_streaming_latency": 3,
                     "voice_settings":             voice_settings,
                 },
                 "asr": {
@@ -840,10 +840,9 @@ Respond with ONLY a valid JSON object, no markdown:
                 },
                 "turn_detection": {
                     "type": "server_vad",
-                    "threshold": 0.3,              # More sensitive detection (0.4 → 0.3)
-                    "prefix_padding_ms": 150,      # Faster reaction time (200 → 150)
-                    "silence_duration_ms": 500,    # Quicker turn ending (700 → 500)
-                    "interrupt_threshold": 0.5,    # CRITICAL: Enables mid-speech interruption
+                    "threshold": 0.4,
+                    "prefix_padding_ms": 200,
+                    "silence_duration_ms": 700,
                 },
                 "conversation": {
                     "max_duration_seconds": 1800,

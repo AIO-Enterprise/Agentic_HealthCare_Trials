@@ -361,14 +361,16 @@ function CampaignDetailPageInner() {
   useEffect(() => {
     if (pageTab !== "bookings" || !id) return;
     setAppointmentsLoading(true);
-    Promise.all([
-      appointmentsAPI.list(id),
-      appointmentsAPI.getBookingConfig(id),
-    ]).then(([appts, config]) => {
-      setAppointments(appts || []);
-      setBookingConfig(config);
-      setBcForm({ slot_duration_minutes: config.slot_duration_minutes, max_per_slot: config.max_per_slot });
-    }).catch(() => {}).finally(() => setAppointmentsLoading(false));
+    appointmentsAPI.list(id)
+      .then((appts) => setAppointments(appts || []))
+      .catch(() => {})
+      .finally(() => setAppointmentsLoading(false));
+    appointmentsAPI.getBookingConfig(id)
+      .then((config) => {
+        setBookingConfig(config);
+        setBcForm({ slot_duration_minutes: config.slot_duration_minutes, max_per_slot: config.max_per_slot });
+      })
+      .catch(() => {});
   }, [pageTab, id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {

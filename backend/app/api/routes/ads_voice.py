@@ -448,15 +448,15 @@ async def list_australian_voices(
 
     voices = [
         {
-            "voice_id":    v.get("voice_id", ""),
-            "name":        v.get("name", ""),
-            "preview_url": v.get("preview_url", ""),
-            "gender":      v.get("labels", {}).get("gender", ""),
-            "age":         v.get("labels", {}).get("age", ""),
-            "description": v.get("labels", {}).get("description", "") or v.get("description", ""),
-            "use_case":    v.get("labels", {}).get("use_case", ""),
-            "accent":      v.get("labels", {}).get("accent", ""),
-            "labels":      v.get("labels", {}),
+            "voice_id":    v.get("voice_id", "") or "",
+            "name":        v.get("name", "") or "",
+            "preview_url": v.get("preview_url", "") or "",
+            "gender":      (v.get("labels") or {}).get("gender", "") or "",
+            "age":         (v.get("labels") or {}).get("age", "") or "",
+            "description": (v.get("labels") or {}).get("description", "") or v.get("description", "") or "",
+            "use_case":    (v.get("labels") or {}).get("use_case", "") or "",
+            "accent":      (v.get("labels") or {}).get("accent", "") or "",
+            "labels":      v.get("labels") or {},
         }
         for v in all_voices
     ]

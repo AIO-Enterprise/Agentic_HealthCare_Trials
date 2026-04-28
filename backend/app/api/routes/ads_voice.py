@@ -457,6 +457,7 @@ async def list_australian_voices(
         "Ben",
         "Paul - Australian Professional Presenter",
         "Hitch",
+        "Matilda",
     }
 
     all_voices: List[Dict[str, Any]] = data.get("voices", [])

@@ -106,12 +106,33 @@ def _wrap(draw, text: str, font, max_w: float) -> List[str]:
 
 
 def _parse_runs(text: str) -> List[Tuple[str, bool]]:
-    """Split headline into [(segment, is_emphasis)] — ALL-CAPS words = emphasis."""
+    """
+    Split headline into [(segment, is_emphasis)] — ALL-CAPS words = emphasis.
+    Pure numbers/symbols (e.g. "1", "3", "70") inherit the emphasis of their
+    neighbours so they don't render tiny between large ALL-CAPS words.
+    """
     words = text.split()
-    runs, cur, cur_emp = [], [], None
+    # First pass: classify each word
+    raw = []
     for word in words:
         letters = re.sub(r"[^a-zA-Z]", "", word)
-        emp = len(letters) >= 2 and letters.isupper()
+        if not letters:
+            raw.append((word, None))           # number / punctuation → inherit
+        else:
+            raw.append((word, len(letters) >= 2 and letters.isupper()))
+
+    # Second pass: resolve None by looking at neighbours
+    resolved = []
+    for i, (word, emp) in enumerate(raw):
+        if emp is None:
+            prev = next((raw[j][1] for j in range(i - 1, -1, -1) if raw[j][1] is not None), None)
+            nxt  = next((raw[j][1] for j in range(i + 1, len(raw))  if raw[j][1] is not None), None)
+            emp  = prev if prev is not None else (nxt if nxt is not None else False)
+        resolved.append((word, emp))
+
+    # Third pass: group consecutive same-emphasis words into runs
+    runs, cur, cur_emp = [], [], None
+    for word, emp in resolved:
         if cur_emp is None:
             cur_emp, cur = emp, [word]
         elif emp == cur_emp:
@@ -211,12 +232,13 @@ def _render_text_block(
     is_over_photo: bool = False,
 ) -> None:
     """
-    Render headline → subtext → CTA pill button, vertically centred inside
-    the given region rectangle.  Modifies canvas in place.
+    Render headline → proof_line → subtext → CTA pill button, vertically
+    centred inside the given region rectangle.  Modifies canvas in place.
     """
     draw = ImageDraw.Draw(canvas)
 
     headline   = layout.get("headline_text", "")
+    proof_line = layout.get("proof_line", "")
     subtext    = layout.get("subtext", "")
     cta        = layout.get("cta", "Book Now")
     txt_color  = _hex_to_rgba(layout.get("text_color",    "#FFFFFF"))
@@ -226,28 +248,24 @@ def _render_text_block(
     rw   = region_x1 - region_x0
     rh   = region_y1 - region_y0
     cx   = (region_x0 + region_x1) // 2
-    pad  = 72
+    pad  = 60
     maxw = rw - pad * 2
 
-    # ── Shadow strength ───────────────────────────────────────────────────────
     shad_off = 5 if is_over_photo else 3
     shad_a   = 160 if is_over_photo else 100
 
     # ── Parse headline into (text, is_emphasis) runs ──────────────────────────
     runs = _parse_runs(headline)
 
-    EMP_MAX, EMP_MIN = 148, 52   # ALL-CAPS emphasis segments
-    REG_SZ           = 62        # regular-case segments
+    EMP_MAX, EMP_MIN = 148, 44
+    REG_MAX          = 108
 
     segments = []
     for seg_text, is_emp in runs:
-        if is_emp:
-            f    = _fit_font(draw, seg_text, maxw, max_size=EMP_MAX, min_size=EMP_MIN)
-            lines = _wrap(draw, seg_text, f, maxw)
-        else:
-            f    = _load_font(_SANS_BOLD, REG_SZ)
-            lines = _wrap(draw, seg_text, f, maxw)
-        lh = _th(draw, lines[0] if lines else seg_text, f)
+        max_sz = EMP_MAX if is_emp else REG_MAX
+        f      = _fit_font(draw, seg_text, maxw, max_size=max_sz, min_size=EMP_MIN)
+        lines  = _wrap(draw, seg_text, f, maxw)
+        lh     = _th(draw, lines[0] if lines else seg_text, f)
         segments.append({"font": f, "is_emp": is_emp, "lines": lines, "lh": lh})
 
     LINE_GAP = 10
@@ -258,6 +276,18 @@ def _render_text_block(
             for s in segments)
         + SEG_GAP * max(0, len(segments) - 1)
     )
+
+    # ── Proof line (credibility stamp between headline and subtext) ───────────
+    proof_sz        = 36
+    proof_font      = None
+    proof_lines_lst = []
+    proof_lh        = 0
+    proof_h         = 0
+    if proof_line:
+        proof_font      = _load_font(_SANS_REG, proof_sz)
+        proof_lines_lst = _wrap(draw, proof_line, proof_font, maxw)
+        proof_lh        = _th(draw, proof_lines_lst[0], proof_font) if proof_lines_lst else 0
+        proof_h         = proof_lh * len(proof_lines_lst) + 6 * max(0, len(proof_lines_lst) - 1)
 
     # ── Subtext ───────────────────────────────────────────────────────────────
     sub_sz   = 46
@@ -271,31 +301,38 @@ def _render_text_block(
     btn_pad_x, btn_pad_y = 72, 30
     btn_h = _th(draw, cta, cta_font) + btn_pad_y * 2
 
-    SUBTEXT_GAP = 30
-    BTN_GAP     = 48
+    PROOF_GAP    = 16   # headline → proof_line
+    PROOF_TO_SUB = 12   # proof_line → subtext
+    SUBTEXT_GAP  = 30   # headline → subtext (when no proof_line)
+    BTN_GAP      = 48
 
-    total_h = hl_h + SUBTEXT_GAP + sub_h + BTN_GAP + btn_h
+    hl_to_sub = (PROOF_GAP + proof_h + PROOF_TO_SUB) if proof_h else SUBTEXT_GAP
+    total_h   = hl_h + hl_to_sub + sub_h + BTN_GAP + btn_h
 
-    # Vertically centre (clamp to padding)
     avail = rh - pad * 2
     if total_h <= avail:
-        y = region_y0 + (rh - total_h) // 2
+        if is_over_photo:
+            y = region_y0 + (rh - total_h) // 2
+        else:
+            y = region_y0 + pad + int((avail - total_h) * 0.25)
     else:
-        # Scale down emphasis font if overflow
-        scale    = avail / total_h
-        new_emp  = max(EMP_MIN, int(EMP_MAX * scale))
-        new_reg  = max(38,      int(REG_SZ  * scale))
-        new_sub  = max(28,      int(sub_sz  * scale))
+        scale     = avail / total_h
+        new_emp   = max(EMP_MIN, int(EMP_MAX  * scale))
+        new_reg   = max(38,      int(REG_MAX  * scale))
+        new_sub   = max(28,      int(sub_sz   * scale))
+        new_proof = max(24,      int(proof_sz * scale))
         segments = []
         for seg_text, is_emp in runs:
-            if is_emp:
-                f    = _fit_font(draw, seg_text, maxw, max_size=new_emp, min_size=EMP_MIN)
-                lines = _wrap(draw, seg_text, f, maxw)
-            else:
-                f    = _load_font(_SANS_BOLD, new_reg)
-                lines = _wrap(draw, seg_text, f, maxw)
-            lh = _th(draw, lines[0] if lines else seg_text, f)
+            max_sz = new_emp if is_emp else new_reg
+            f      = _fit_font(draw, seg_text, maxw, max_size=max_sz, min_size=EMP_MIN)
+            lines  = _wrap(draw, seg_text, f, maxw)
+            lh     = _th(draw, lines[0] if lines else seg_text, f)
             segments.append({"font": f, "is_emp": is_emp, "lines": lines, "lh": lh})
+        if proof_line:
+            proof_font      = _load_font(_SANS_REG, new_proof)
+            proof_lines_lst = _wrap(draw, proof_line, proof_font, maxw)
+            proof_lh        = _th(draw, proof_lines_lst[0], proof_font) if proof_lines_lst else 0
+            proof_h         = proof_lh * len(proof_lines_lst) + 6 * max(0, len(proof_lines_lst) - 1)
         font_sub  = _load_font(_SANS_BOLD, new_sub)
         sub_lines = _wrap(draw, subtext, font_sub, maxw)
         sub_lh    = _th(draw, sub_lines[0], font_sub) if sub_lines else 0
@@ -307,7 +344,8 @@ def _render_text_block(
                 for s in segments)
             + SEG_GAP * max(0, len(segments) - 1)
         )
-        total_h   = hl_h + SUBTEXT_GAP + sub_h + BTN_GAP + btn_h
+        hl_to_sub = (PROOF_GAP + proof_h + PROOF_TO_SUB) if proof_h else SUBTEXT_GAP
+        total_h   = hl_h + hl_to_sub + sub_h + BTN_GAP + btn_h
         y = region_y0 + max(pad, (rh - total_h) // 2)
 
     # ── Draw headline ─────────────────────────────────────────────────────────
@@ -324,8 +362,22 @@ def _render_text_block(
         if i < len(segments) - 1:
             y += SEG_GAP
 
+    # ── Draw proof line (credibility stamp) ───────────────────────────────────
+    if proof_h and proof_font:
+        y += PROOF_GAP
+        proof_color = _hex_to_rgba(layout.get("divider_color", "#FFFFFF"), 210)
+        for j, line in enumerate(proof_lines_lst):
+            lw = _tw(draw, line, proof_font)
+            to = _top_off(draw, line, proof_font)
+            draw.text((int(cx - lw / 2), int(y - to)), line, font=proof_font, fill=proof_color)
+            y += proof_lh
+            if j < len(proof_lines_lst) - 1:
+                y += 6
+        y += PROOF_TO_SUB
+    else:
+        y += SUBTEXT_GAP
+
     # ── Draw subtext ──────────────────────────────────────────────────────────
-    y += SUBTEXT_GAP
     for j, line in enumerate(sub_lines):
         lw = _tw(draw, line, font_sub)
         to = _top_off(draw, line, font_sub)
@@ -339,11 +391,9 @@ def _render_text_block(
     # ── CTA pill button ───────────────────────────────────────────────────────
     y += BTN_GAP
     if _is_light(panel_hex):
-        # light panel → dark filled button
         btn_fill = _hex_to_rgba(layout.get("text_color", "#1a1a1a"))
         btn_txt  = (255, 255, 255, 255)
     else:
-        # dark panel → white filled button with panel-colour text
         btn_fill = (255, 255, 255, 255)
         btn_txt  = _hex_to_rgba(panel_hex)
 
@@ -356,7 +406,8 @@ def _render_text_block(
 def _layout_dark_panel_top(photo_bytes: bytes, layout: dict,
                             canvas_w: int, canvas_h: int) -> bytes:
     bg_hex  = layout.get("top_bg_color", "#0a1f5c")
-    top_pct = max(0.38, min(0.55, layout.get("top_height_pct", 44) / 100))
+    # Allow panel up to 65% so tall headlines have room at full font size
+    top_pct = max(0.44, min(0.65, layout.get("top_height_pct", 52) / 100))
     top_h   = int(canvas_h * top_pct)
     bot_h   = canvas_h - top_h
     bg_rgb  = _hex_to_rgb(bg_hex)
@@ -395,7 +446,8 @@ def _layout_dark_panel_top(photo_bytes: bytes, layout: dict,
 
 def _layout_photo_top(photo_bytes: bytes, layout: dict,
                       canvas_w: int, canvas_h: int) -> bytes:
-    photo_pct = max(0.40, min(0.60, layout.get("top_height_pct", 50) / 100))
+    # Photo capped at 48% so the text panel always has ≥ 52% to work with
+    photo_pct = max(0.36, min(0.48, layout.get("top_height_pct", 44) / 100))
     photo_h   = int(canvas_h * photo_pct)
     panel_h   = canvas_h - photo_h
     panel_hex = layout.get("top_bg_color", "#F5F0EB")
@@ -442,18 +494,18 @@ def _layout_full_bleed(photo_bytes: bytes, layout: dict,
     photo = _crop_resize(photo_bytes, canvas_w, canvas_h)
     canvas.alpha_composite(photo)
 
-    # Dark scrim from bottom — covers bottom 55% with deep opacity
-    scrim_h = int(canvas_h * 0.58)
+    # Dark scrim from bottom — covers bottom 62% with deep opacity
+    scrim_h = int(canvas_h * 0.62)
     _draw_gradient(canvas,
                    0, canvas_h - scrim_h, canvas_w, canvas_h,
-                   (*scrim_rgb, 0), (*scrim_rgb, 235))
+                   (*scrim_rgb, 0), (*scrim_rgb, 245))
 
     # Lighter top vignette (adds depth, helps logo area)
     _draw_gradient(canvas, 0, 0, canvas_w, int(canvas_h * 0.18),
-                   (*scrim_rgb, 120), (*scrim_rgb, 0))
+                   (*scrim_rgb, 130), (*scrim_rgb, 0))
 
-    # Text block in bottom 55%
-    text_region_top = canvas_h - scrim_h + int(scrim_h * 0.06)
+    # Text block starts at top of scrim with small inset
+    text_region_top = canvas_h - scrim_h + int(scrim_h * 0.05)
     _render_text_block(canvas, layout,
                        0, text_region_top, canvas_w, canvas_h,
                        is_over_photo=True)

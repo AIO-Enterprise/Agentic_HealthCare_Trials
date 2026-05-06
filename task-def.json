@@ -77,7 +77,7 @@
         {"name": "META_OAUTH_REDIRECT_URI",   "value": "https://d2s8k22yb5c8me.cloudfront.net/api/platform-connections/meta/callback"},
         {"name": "APP_PUBLIC_URL",            "value": "https://d2s8k22yb5c8me.cloudfront.net"},
         {"name": "ELEVENLABS_TTS_MODEL",      "value": "eleven_v3_conversational"},
-        {"name": "AZURE_OPENAI_API_VERSION",  "value": "2025-05-01-preview"},
+        {"name": "AZURE_OPENAI_API_VERSION",  "value": "2024-02-01"},
         {"name": "AZURE_CHAT_DEPLOYMENT",     "value": "gpt-5"}
       ],
       "secrets": [

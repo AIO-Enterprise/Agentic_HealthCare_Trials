@@ -348,7 +348,6 @@ If no formats are defined, generate three 1080x1920 Meta Story Ads — each a di
                 size=size,
                 quality="high",
                 n=1,
-                response_format="b64_json",
             )
             photo_bytes = base64.b64decode(response.data[0].b64_json)
             log.info("GPT image generated [format=%s, ad=%s]", format_name, ad_id)

@@ -18,7 +18,7 @@ Account ID: `809411919411`
 
 | Service | Image | Task Definition |
 |---|---|---|
-| Backend | `backend:v10` | `agentic-healthcare-backend:22` |
+| Backend | `backend:v11` | `agentic-healthcare-backend:23` |
 | Frontend | `frontend:v12` | `agentic-healthcare-frontend:9` |
 
 ---
@@ -198,6 +198,7 @@ aws logs tail /ecs/agentic-healthcare-frontend --follow --region us-east-1
 | `backend:v8` | Background tasks for all LLM endpoints — fixes CloudFront 504 on strategy gen |
 | `backend:v9` | Added `/api/company` to onboarding security allowlist — fixes location save 403 |
 | `backend:v10` | Env/secrets update redeploy |
+| `backend:v11` | Fix image generation — wrong Azure deployment name `gpt-image-1.5` → `gpt-image-1` |
 | `frontend:v8` | S3 pre-signed upload with direct multipart fallback |
 | `frontend:v9` | Auto-fallback on S3 403 (IAM AccessDenied) |
 | `frontend:v10` | HTTP polling for creative/website/review background tasks |

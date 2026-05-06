@@ -42,10 +42,14 @@ def _image_generation_enabled() -> bool:
         or settings.OPENAI_API_KEY
     )
     import logging
-    logging.getLogger(__name__).info(
-        "Image generation enabled=%s | AZURE_ENDPOINT=%s | AZURE_KEY=%s | OPENAI_KEY=%s",
+    _log = logging.getLogger(__name__)
+    # Partial endpoint — safe to log (no credentials)
+    endpoint_hint = (settings.AZURE_OPENAI_ENDPOINT or "")[:60] if settings.AZURE_OPENAI_ENDPOINT else "not set"
+    _log.info(
+        "Image generation enabled=%s | model=%s | azure_endpoint=%s | has_azure_key=%s | has_openai_key=%s",
         enabled,
-        bool(settings.AZURE_OPENAI_ENDPOINT),
+        settings.OPENAI_IMAGE_MODEL,
+        endpoint_hint,
         bool(settings.AZURE_OPENAI_API_KEY),
         bool(settings.OPENAI_API_KEY),
     )
@@ -344,7 +348,7 @@ If no formats are defined, generate three 1080x1920 Meta Story Ads — each a di
                 size=size,
                 quality="high",
                 n=1,
-                output_format="png",
+                response_format="b64_json",
             )
             photo_bytes = base64.b64decode(response.data[0].b64_json)
             log.info("GPT image generated [format=%s, ad=%s]", format_name, ad_id)

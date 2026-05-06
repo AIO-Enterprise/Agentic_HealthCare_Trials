@@ -55,7 +55,7 @@
   "containerDefinitions": [
     {
       "name": "backend",
-      "image": "809411919411.dkr.ecr.us-east-1.amazonaws.com/agentic_healthcare/backend:v11",
+      "image": "809411919411.dkr.ecr.us-east-1.amazonaws.com/agentic_healthcare/backend:v12",
       "portMappings": [{"containerPort": 8000, "protocol": "tcp"}],
       "essential": true,
       "mountPoints": [
@@ -73,11 +73,11 @@
         {"name": "ALLOWED_ORIGINS",    "value": "https://d2s8k22yb5c8me.cloudfront.net,http://localhost:5173,http://localhost:3000,http://localhost:8000"},
         {"name": "DATABASE_URL",       "value": "sqlite+aiosqlite:////db/marketing_platform.db"},
         {"name": "S3_UPLOAD_BUCKET",           "value": "agentic-healthcare-uploads-809411919411-us-east-1-an"},
-        {"name": "OPENAI_IMAGE_MODEL",        "value": "gpt-image-1"},
+        {"name": "OPENAI_IMAGE_MODEL",        "value": "gpt-image-1.5"},
         {"name": "META_OAUTH_REDIRECT_URI",   "value": "https://d2s8k22yb5c8me.cloudfront.net/api/platform-connections/meta/callback"},
         {"name": "APP_PUBLIC_URL",            "value": "https://d2s8k22yb5c8me.cloudfront.net"},
         {"name": "ELEVENLABS_TTS_MODEL",      "value": "eleven_v3_conversational"},
-        {"name": "AZURE_OPENAI_API_VERSION",  "value": "2025-04-01-preview"},
+        {"name": "AZURE_OPENAI_API_VERSION",  "value": "2025-05-01-preview"},
         {"name": "AZURE_CHAT_DEPLOYMENT",     "value": "gpt-5"}
       ],
       "secrets": [

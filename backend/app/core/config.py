@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     # Leave blank to fall back to standard OpenAI (OPENAI_API_KEY).
     AZURE_OPENAI_ENDPOINT: Optional[str] = None
     AZURE_OPENAI_API_KEY: Optional[str] = None
-    AZURE_OPENAI_API_VERSION: str = "2025-04-01-preview"
+    AZURE_OPENAI_API_VERSION: str = "2025-05-01-preview"
     # Azure OpenAI Chat (GPT-5) — separate resource from image gen if needed
     # If blank, falls back to AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_API_KEY
     AZURE_CHAT_ENDPOINT: Optional[str] = None
@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     AZURE_CHAT_DEPLOYMENT: str = "gpt-5"
     # Standard OpenAI fallback
     OPENAI_API_KEY: Optional[str] = None
-    OPENAI_IMAGE_MODEL: str = "gpt-image-1"
+    OPENAI_IMAGE_MODEL: str = "gpt-image-1.5"
 
     # Meta for Developers – OAuth credentials for Facebook/Instagram ad publishing
     # Register your app at https://developers.facebook.com and add the Marketing API product.

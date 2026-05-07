@@ -100,7 +100,7 @@ async def distribute_to_meta(
     cfg = body.get("config") or {}
     destination_url    = (cfg.get("destination_url") or "").strip()
     daily_budget_str   = str(cfg.get("daily_budget") or "10").strip()
-    countries_str      = (cfg.get("targeting_countries") or "US").strip()
+    countries_str      = (cfg.get("targeting_countries") or "AU").strip()
     selected_creatives = cfg.get("selected_creatives") or []
     display_url        = (cfg.get("display_url")  or "").strip() or None
     addon_type         = (cfg.get("addon_type")   or "").strip() or None

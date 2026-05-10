@@ -28,7 +28,15 @@ export default function AdPreviewModal({ ad, onClose }) {
             <div key={i} className="ad-creative-card">
               <div className="ad-creative-card__image-area" style={{ aspectRatio: aspectRatioForFormat(c.format) }}>
                 {c.image_url ? (
-                  <img src={c.image_url} alt={c.headline} style={{ maxHeight: "260px", maxWidth: "100%", width: "auto", height: "auto", display: "block" }} />
+                  c.image_url.endsWith(".mp4") ? (
+                    <video
+                      src={c.image_url}
+                      autoPlay loop muted playsInline
+                      style={{ maxHeight: "260px", maxWidth: "100%", width: "auto", height: "auto", display: "block" }}
+                    />
+                  ) : (
+                    <img src={c.image_url} alt={c.headline} style={{ maxHeight: "260px", maxWidth: "100%", width: "auto", height: "auto", display: "block" }} />
+                  )
                 ) : (
                   <div className="flex flex-col items-center gap-2">
                     <ImageOff size={28} style={{ color: "var(--color-sidebar-text)" }} />

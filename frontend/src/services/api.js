@@ -626,6 +626,9 @@ export const adsAPI = {
   generateCreatives: (adId) =>
     request(`/advertisements/${adId}/generate-creatives`, { method: "POST" }),
 
+  generateShorts: (adId) =>
+    request(`/advertisements/${adId}/generate-shorts`, { method: "POST" }),
+
   updateBotConfig: (adId, data) =>
     request(`/advertisements/${adId}/bot-config`, {
       method: "PATCH",

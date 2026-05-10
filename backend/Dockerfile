@@ -6,6 +6,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-dejavu-core \
     fonts-liberation \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt .

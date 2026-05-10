@@ -34,11 +34,19 @@ export default function CreativesViewer({ creatives }) {
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <img
-              src={popover.url}
-              alt="Ad creative"
-              style={{ width: "100%", display: "block", objectFit: "contain", maxHeight: 360 }}
-            />
+            {popover.url.endsWith(".mp4") ? (
+              <video
+                src={popover.url}
+                autoPlay loop muted playsInline
+                style={{ width: "100%", display: "block", maxHeight: 360 }}
+              />
+            ) : (
+              <img
+                src={popover.url}
+                alt="Ad creative"
+                style={{ width: "100%", display: "block", objectFit: "contain", maxHeight: 360 }}
+              />
+            )}
             <button
               onClick={() => setPopover(null)}
               style={{
@@ -81,11 +89,19 @@ export default function CreativesViewer({ creatives }) {
               alignSelf: "center",
             }}>
               {c.image_url ? (
-                <img
-                  src={c.image_url}
-                  alt={c.headline}
-                  style={{ maxHeight: "260px", maxWidth: "100%", width: "auto", height: "auto", display: "block" }}
-                />
+                c.image_url.endsWith(".mp4") ? (
+                  <video
+                    src={c.image_url}
+                    autoPlay loop muted playsInline
+                    style={{ maxHeight: "260px", maxWidth: "100%", width: "auto", height: "auto", display: "block" }}
+                  />
+                ) : (
+                  <img
+                    src={c.image_url}
+                    alt={c.headline}
+                    style={{ maxHeight: "260px", maxWidth: "100%", width: "auto", height: "auto", display: "block" }}
+                  />
+                )
               ) : (
                 <div style={{
                   width: "100%", height: "100%", minHeight: "160px",

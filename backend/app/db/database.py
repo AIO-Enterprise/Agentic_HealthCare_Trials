@@ -132,6 +132,7 @@ async def init_db():
                 "ALTER TABLE voice_sessions ADD COLUMN call_analysis JSON;",
                 "ALTER TABLE chat_sessions ADD COLUMN chat_analysis JSON;",
                 "ALTER TABLE advertisements ADD COLUMN booking_config JSON;",
+                "ALTER TABLE advertisements ADD COLUMN shorts_files JSON;",
                 # Appointment booking source tracking
                 "ALTER TABLE appointments ADD COLUMN voice_session_id VARCHAR;",
                 "ALTER TABLE appointments ADD COLUMN chat_session_id VARCHAR;",

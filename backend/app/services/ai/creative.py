@@ -262,8 +262,24 @@ class CreativeService:
                 "image_url":    image_url,
             }
 
-        results = await asyncio.gather(*[process(c) for c in items])
-        return list(results)
+        results = list(await asyncio.gather(*[process(c) for c in items]))
+
+        # Generate a short video from the first PNG creative (runs after PNGs complete)
+        if _image_generation_enabled() and results:
+            first = results[0]
+            if first.get("image_url"):
+                video_url = await asyncio.to_thread(
+                    self._generate_video_from_creative,
+                    first, output_dir, ad.id,
+                )
+                if video_url:
+                    results.append({
+                        **first,
+                        "format": "1080x1920 Short Video",
+                        "image_url": video_url,
+                    })
+
+        return results
 
     # ── Step 1: Claude brief ──────────────────────────────────────────────────
 
@@ -379,6 +395,119 @@ If no formats are defined, generate three 1080x1920 Meta Story Ads — each a di
             return f"/outputs/{self.company_id}/{ad_id}/{filename}"
         except Exception as exc:
             log.error("Failed to save creative [format=%s, ad=%s]: %s", format_name, ad_id, exc)
+            return None
+
+    async def generate_shorts(self, ad: Advertisement) -> List[Dict[str, Any]]:
+        """
+        Generate a 4-second silent short video from each existing PNG creative.
+        Returns list of creative dicts with .mp4 image_url, same structure as output_files.
+        """
+        source_creatives = ad.output_files or []
+        png_sources = [c for c in source_creatives if c.get("image_url") and not c["image_url"].endswith(".mp4")]
+        if not png_sources:
+            return []
+
+        output_dir = os.path.join(settings.OUTPUT_DIR, self.company_id, ad.id)
+        os.makedirs(output_dir, exist_ok=True)
+
+        results = list(await asyncio.gather(*[
+            asyncio.to_thread(self._generate_short_from_creative, c, output_dir, ad.id, i)
+            for i, c in enumerate(png_sources)
+        ]))
+
+        return [r for r in results if r is not None]
+
+    def _generate_short_from_creative(
+        self,
+        creative: dict,
+        output_dir: str,
+        ad_id: str,
+        index: int = 0,
+    ) -> dict | None:
+        import logging as _log, time, os as _os
+        log = _log.getLogger(__name__)
+
+        image_url = creative.get("image_url", "")
+        relative  = image_url.removeprefix("/outputs/")
+        png_path  = _os.path.join(settings.OUTPUT_DIR, relative)
+        if not _os.path.exists(png_path):
+            log.warning("PNG not found for short generation: %s", png_path)
+            return None
+
+        with open(png_path, "rb") as f:
+            png_bytes = f.read()
+
+        fmt = creative.get("format", "1080x1920")
+        canvas_w, canvas_h = self._get_canvas_dimensions(fmt)
+
+        try:
+            from app.services.ai.video_compositor import composite_short_video
+            mp4_bytes = composite_short_video(png_bytes, canvas_w, canvas_h)
+            if not mp4_bytes:
+                return None
+        except Exception as exc:
+            log.error("Short video compositor failed for ad %s: %s", ad_id, exc)
+            return None
+
+        try:
+            ts       = int(time.time())
+            filename = f"short_{index}_{ts}.mp4"
+            out_path = _os.path.join(output_dir, filename)
+            with open(out_path, "wb") as f:
+                f.write(mp4_bytes)
+            return {
+                **creative,
+                "format":    f"{fmt} · Short",
+                "image_url": f"/outputs/{self.company_id}/{ad_id}/{filename}",
+            }
+        except Exception as exc:
+            log.error("Failed to save short for ad %s: %s", ad_id, exc)
+            return None
+
+    def _generate_video_from_creative(
+        self,
+        creative: dict,
+        output_dir: str,
+        ad_id: str,
+    ) -> str | None:
+        import logging, time, os as _os
+        log = logging.getLogger(__name__)
+
+        image_url = creative.get("image_url", "")
+        if not image_url:
+            return None
+
+        # Map /outputs/{company_id}/{ad_id}/file.png → disk path
+        relative = image_url.removeprefix("/outputs/")
+        png_path  = _os.path.join(settings.OUTPUT_DIR, relative)
+        if not _os.path.exists(png_path):
+            log.warning("PNG not found for video generation: %s", png_path)
+            return None
+
+        with open(png_path, "rb") as f:
+            png_bytes = f.read()
+
+        fmt = creative.get("format", "1080x1920")
+        canvas_w, canvas_h = self._get_canvas_dimensions(fmt)
+
+        try:
+            from app.services.ai.video_compositor import composite_video
+            mp4_bytes = composite_video(png_bytes, canvas_w, canvas_h)
+            if not mp4_bytes:
+                return None
+        except Exception as exc:
+            log.error("Video compositor failed for ad %s: %s", ad_id, exc)
+            return None
+
+        try:
+            ts       = int(time.time())
+            filename = f"creative_video_{ts}.mp4"
+            out_path = _os.path.join(output_dir, filename)
+            with open(out_path, "wb") as f:
+                f.write(mp4_bytes)
+            return f"/outputs/{self.company_id}/{ad_id}/{filename}"
+        except Exception as exc:
+            log.error("Failed to save video creative for ad %s: %s", ad_id, exc)
             return None
 
     def _get_openai_size(self, format_name: str) -> str:

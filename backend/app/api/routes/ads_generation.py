@@ -132,6 +132,27 @@ async def _bg_generate_creatives(ad_id: str, company_id: str) -> None:
         logger.error("Background creative generation failed for ad %s: %s", ad_id, e, exc_info=True)
 
 
+async def _bg_generate_shorts(ad_id: str, company_id: str) -> None:
+    """Background task: generate short video creatives from existing PNG creatives."""
+    from app.db.database import async_session_factory
+    from app.services.ai.creative import CreativeService
+    from datetime import datetime, timezone
+    try:
+        async with async_session_factory() as db:
+            result = await db.execute(select(Advertisement).where(Advertisement.id == ad_id))
+            ad = result.scalar_one_or_none()
+            if not ad:
+                return
+            svc    = CreativeService(company_id=company_id)
+            shorts = await svc.generate_shorts(ad)
+            ad.shorts_files = shorts
+            ad.updated_at   = datetime.now(timezone.utc).replace(tzinfo=None)
+            flag_modified(ad, "shorts_files")
+            await db.commit()
+    except Exception as e:
+        logger.error("Background shorts generation failed for ad %s: %s", ad_id, e, exc_info=True)
+
+
 async def _bg_submit_for_review(ad_id: str, company_id: str) -> None:
     """Background task: run Reviewer pre-analysis and move ad to UNDER_REVIEW."""
     from app.db.database import async_session_factory
@@ -395,6 +416,48 @@ async def generate_creatives(
         ))
         await db.flush()
 
+    return ad
+
+
+# ── Shorts generation ─────────────────────────────────────────────────────────
+
+@router.post("/{ad_id}/generate-shorts", response_model=AdvertisementOut)
+async def generate_shorts(
+    ad_id: str,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(require_roles([UserRole.STUDY_COORDINATOR, UserRole.PUBLISHER, UserRole.PROJECT_MANAGER, UserRole.ETHICS_MANAGER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Kick off async short-video generation from existing PNG creatives.
+    Returns immediately; frontend polls GET /{ad_id} for shorts_files.
+    """
+    result = await db.execute(
+        select(Advertisement).where(
+            Advertisement.id == ad_id,
+            Advertisement.company_id == user.company_id,
+        )
+    )
+    ad = result.scalar_one_or_none()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+    if not ad.output_files:
+        raise HTTPException(
+            status_code=400,
+            detail="Generate ad creatives first before generating shorts.",
+        )
+
+    png_sources = [
+        c for c in ad.output_files
+        if c.get("image_url") and not c["image_url"].endswith(".mp4")
+    ]
+    if not png_sources:
+        raise HTTPException(
+            status_code=400,
+            detail="No ad images found. Regenerate ad creatives with image generation enabled first.",
+        )
+
+    background_tasks.add_task(_bg_generate_shorts, ad_id, user.company_id)
     return ad
 
 

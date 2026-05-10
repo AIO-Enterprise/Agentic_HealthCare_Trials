@@ -20,6 +20,7 @@ import {
   PageWithSidebar, SectionCard, CampaignStatusBadge,
 } from "../shared/Layout";
 import { adsAPI, surveyAPI } from "../../services/api";
+import CreativesViewer from "../admin/campaign/CreativesViewer";
 import {
   ArrowLeft, CheckCircle, XCircle, MessageSquare,
   Megaphone, Globe, Image, Bot, Loader2, AlertCircle,
@@ -1640,6 +1641,7 @@ function ActionTabs({ active, onChange }) {
 const PAGE_TABS = [
   { key: "overview",      label: "Overview",      icon: LayoutDashboard },
   { key: "strategy",      label: "Strategy",      icon: Layers          },
+  { key: "creatives",     label: "Creatives",     icon: Image           },
   { key: "questionnaire", label: "Questionnaire", icon: ClipboardList   },
   { key: "participants",  label: "Participants",  icon: Users           },
   { key: "review",        label: "Review",        icon: ClipboardCheck  },
@@ -1957,6 +1959,20 @@ export default function ReviewerCampaignDetail() {
               </div>
             )
           }
+        </div>
+      )}
+
+      {/* CREATIVES */}
+      {pageTab === "creatives" && (
+        <div>
+          {ad.output_files?.length ? (
+            <CreativesViewer creatives={ad.output_files} />
+          ) : (
+            <div style={{ textAlign: "center", padding: "48px 0" }}>
+              <Image size={32} style={{ color: "var(--color-card-border)", margin: "0 auto 12px" }} />
+              <p style={{ color: "var(--color-sidebar-text)", fontSize: "0.9rem" }}>No creatives generated yet for this campaign.</p>
+            </div>
+          )}
         </div>
       )}
 

@@ -7,12 +7,13 @@
  * Styles: use classes from index.css only — no raw Tailwind color utilities.
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { SectionCard, CampaignStatusBadge } from "./Layout";
 import { adsAPI } from "../../services/api";
 import {
   Image, Globe, Download, Eye, Loader2,
-  Sparkles, ImageOff, MonitorSmartphone,
+  Sparkles, ImageOff, MonitorSmartphone, Clapperboard,
+  Volume2, VolumeX,
 } from "lucide-react";
 
 
@@ -51,11 +52,19 @@ function CreativesGrid({ creatives }) {
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <img
-              src={lightbox}
-              alt="Ad creative"
-              style={{ maxHeight: "80vh", maxWidth: "80vw", display: "block", objectFit: "contain" }}
-            />
+            {lightbox.endsWith(".mp4") ? (
+              <video
+                src={lightbox}
+                autoPlay loop muted playsInline
+                style={{ maxHeight: "80vh", maxWidth: "80vw", display: "block" }}
+              />
+            ) : (
+              <img
+                src={lightbox}
+                alt="Ad creative"
+                style={{ maxHeight: "80vh", maxWidth: "80vw", display: "block", objectFit: "contain" }}
+              />
+            )}
             <button
               onClick={() => setLightbox(null)}
               style={{
@@ -99,11 +108,19 @@ function CreativesGrid({ creatives }) {
               alignSelf: "center",
             }}>
               {c.image_url ? (
-                <img
-                  src={c.image_url}
-                  alt={c.headline}
-                  style={{ maxHeight: 220, maxWidth: "100%", width: "auto", height: "auto", display: "block" }}
-                />
+                c.image_url.endsWith(".mp4") ? (
+                  <video
+                    src={c.image_url}
+                    autoPlay loop muted playsInline
+                    style={{ maxHeight: 220, maxWidth: "100%", width: "auto", height: "auto", display: "block" }}
+                  />
+                ) : (
+                  <img
+                    src={c.image_url}
+                    alt={c.headline}
+                    style={{ maxHeight: 220, maxWidth: "100%", width: "auto", height: "auto", display: "block" }}
+                  />
+                )
               ) : (
                 <div style={{
                   width: "100%", height: "100%", minHeight: 140,
@@ -188,6 +205,175 @@ function CreativesGrid({ creatives }) {
   );
 }
 
+// ─── Shorts grid ─────────────────────────────────────────────────────────────
+
+function ShortVideoCard({ short, onExpand }) {
+  const videoRef     = useRef(null);
+  const [muted, setMuted] = useState(true);
+
+  const toggleMute = (e) => {
+    e.stopPropagation();
+    const v = videoRef.current;
+    if (!v) return;
+    const next = !v.muted;
+    v.muted = next;
+    if (!next && v.paused) v.play().catch(() => {});
+    setMuted(next);
+  };
+
+  return (
+    <div style={{
+      position: "relative",
+      aspectRatio: "9/16",
+      backgroundColor: "#000",
+      overflow: "hidden",
+    }}>
+      <video
+        ref={videoRef}
+        src={short.image_url}
+        autoPlay loop muted playsInline
+        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+      />
+      {/* Format badge */}
+      <span style={{
+        position: "absolute", top: 8, left: 8,
+        fontSize: "0.6rem", fontWeight: 700, padding: "2px 7px", borderRadius: 4,
+        backgroundColor: "rgba(0,0,0,0.65)", color: "#fff", backdropFilter: "blur(4px)",
+      }}>
+        {short.format}
+      </span>
+      {/* Mute toggle */}
+      <button
+        onClick={toggleMute}
+        title={muted ? "Unmute" : "Mute"}
+        style={{
+          position: "absolute", bottom: 8, left: 8,
+          background: "rgba(0,0,0,0.6)", border: "none", borderRadius: 999,
+          width: 28, height: 28, cursor: "pointer",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          color: "#fff", backdropFilter: "blur(4px)",
+        }}
+      >
+        {muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+      </button>
+      {/* Expand */}
+      <button
+        onClick={onExpand}
+        title="View full size"
+        style={{
+          position: "absolute", top: 8, right: 8,
+          background: "rgba(0,0,0,0.6)", border: "none", borderRadius: 6,
+          padding: "4px 6px", cursor: "pointer",
+          display: "flex", alignItems: "center", color: "#fff",
+          backdropFilter: "blur(4px)",
+        }}
+      >
+        <Eye size={12} />
+      </button>
+    </div>
+  );
+}
+
+function ShortsGrid({ shorts }) {
+  const [lightbox, setLightbox] = useState(null);
+
+  if (!shorts?.length) {
+    return (
+      <div style={{ textAlign: "center", padding: "48px 20px", color: "var(--color-sidebar-text)" }}>
+        <Clapperboard size={36} style={{ opacity: 0.25, marginBottom: 12 }} />
+        <p style={{ fontSize: 13, fontWeight: 500 }}>No shorts generated yet.</p>
+        <p style={{ fontSize: 12, marginTop: 4, opacity: 0.7 }}>Use the Generate Shorts button below.</p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {lightbox && (
+        <>
+          <div
+            onClick={() => setLightbox(null)}
+            style={{ position: "fixed", inset: 0, zIndex: 999, backgroundColor: "rgba(0,0,0,0.75)", backdropFilter: "blur(3px)" }}
+          />
+          <div
+            style={{
+              position: "fixed", zIndex: 1000,
+              top: "50%", left: "50%",
+              transform: "translate(-50%, -50%)",
+              borderRadius: 14, overflow: "hidden",
+              boxShadow: "0 12px 40px rgba(0,0,0,0.35)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <video
+              src={lightbox}
+              autoPlay loop muted playsInline
+              style={{ maxHeight: "80vh", maxWidth: "80vw", display: "block" }}
+            />
+            <button
+              onClick={() => setLightbox(null)}
+              style={{
+                position: "absolute", top: 8, right: 8,
+                background: "rgba(0,0,0,0.55)", border: "none", borderRadius: 6,
+                padding: "3px 6px", cursor: "pointer", color: "#fff",
+                display: "flex", alignItems: "center", fontSize: 16,
+              }}
+            >✕</button>
+          </div>
+        </>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 18 }}>
+        {shorts.map((s, i) => (
+          <div
+            key={i}
+            style={{
+              borderRadius: 16,
+              border: "2px solid var(--color-card-border)",
+              backgroundColor: "var(--color-card-bg)",
+              boxShadow: "0 4px 18px rgba(0,0,0,0.10)",
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            {/* Video — 9:16 portrait with mute toggle */}
+            <ShortVideoCard short={s} onExpand={() => setLightbox(s.image_url)} />
+
+            {/* Copy */}
+            <div style={{ padding: "12px 14px", textAlign: "center" }}>
+              <p style={{ fontSize: "0.88rem", fontWeight: 700, color: "var(--color-input-text)", marginBottom: 4, lineHeight: 1.3 }}>
+                {s.headline}
+              </p>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginTop: 8 }}>
+                <span style={{
+                  fontSize: "0.72rem", fontWeight: 600,
+                  padding: "3px 10px", borderRadius: 999,
+                  backgroundColor: "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.12)",
+                  color: "var(--color-accent)",
+                  border: "1px solid rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.25)",
+                }}>
+                  {s.cta}
+                </span>
+                <a
+                  href={s.image_url}
+                  download
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 3,
+                    fontSize: "0.68rem", color: "var(--color-sidebar-text)", textDecoration: "none",
+                  }}
+                >
+                  <Download size={10} /> Save
+                </a>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 // ─── Website preview pane ─────────────────────────────────────────────────────
 
 function WebsitePane({ ad }) {
@@ -254,46 +440,46 @@ export default function PreviewPanel({ ads }) {
     setError(null);
   };
 
-  // Poll GET /{adId} until updated_at changes (background task committed).
-  // Tolerates transient 5xx / network errors — keeps the spinner up and
-  // keeps trying until the ad update commits or the deadline is hit.
-  const pollUntilUpdated = async (adId, beforeUpdatedAt, timeoutMs = 300_000) => {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 4000));
-      try {
-        const latest = await adsAPI.get(adId);
-        if (latest.updated_at !== beforeUpdatedAt) return latest;
-      } catch (err) {
-        const msg = String(err?.message || "");
-        const isTransient = /HTTP 5\d\d|503|502|504|Failed to fetch|NetworkError/i.test(msg);
-        if (!isTransient) throw err;
-        // swallow and keep polling
-      }
-    }
-    throw new Error("Timed out waiting for generation to complete. Please refresh the page.");
-  };
 
   const handleRegen = async (type) => {
     if (!currentAd) return;
     setError(null);
     setRegenState(type);
     try {
-      if (instructions.trim()) {
+      if (type !== "shorts" && instructions.trim()) {
         await adsAPI.rewriteStrategy(currentAd.id, { instructions: instructions.trim() });
       }
-      const beforeUpdatedAt = currentAd.updated_at;
+      const beforeUpdatedAt  = currentAd.updated_at;
+      const beforeShortsLen  = currentAd.shorts_files?.length ?? -1;
       if (type === "creatives") {
         await adsAPI.generateCreatives(currentAd.id);
         setPreviewTab("creatives");
+      } else if (type === "shorts") {
+        await adsAPI.generateShorts(currentAd.id);
+        setPreviewTab("shorts");
       } else {
         await adsAPI.generateWebsite(currentAd.id);
         setPreviewTab("website");
       }
-      // Poll until the background task commits a new updated_at.
-      // Website generation is slower (Claude + image gen + EFS write) so give it longer.
       const timeoutMs = type === "website" ? 600_000 : 300_000;
-      const fresh = await pollUntilUpdated(currentAd.id, beforeUpdatedAt, timeoutMs);
+      // For shorts: also treat a shorts_files change as "done" (handles fast completion)
+      const isDone = type === "shorts"
+        ? (latest) => latest.updated_at !== beforeUpdatedAt || (latest.shorts_files?.length ?? -1) !== beforeShortsLen
+        : (latest) => latest.updated_at !== beforeUpdatedAt;
+      const deadline = Date.now() + timeoutMs;
+      let fresh;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 3000));
+        try {
+          fresh = await adsAPI.get(currentAd.id);
+          if (isDone(fresh)) break;
+          fresh = null;
+        } catch (err) {
+          const msg = String(err?.message || "");
+          if (!/HTTP 5\d\d|503|502|504|Failed to fetch|NetworkError/i.test(msg)) throw err;
+        }
+      }
+      if (!fresh) throw new Error("Timed out waiting for generation. Please refresh.");
       setCurrentAd(fresh);
     } catch (err) {
       setError(err.message);
@@ -417,6 +603,25 @@ export default function PreviewPanel({ ads }) {
               )}
             </button>
             <button
+              onClick={() => setPreviewTab("shorts")}
+              className={previewTab === "shorts" ? "filter-tab--active" : "filter-tab"}
+            >
+              <Clapperboard size={13} style={{ marginRight: 4, verticalAlign: "middle" }} />
+              Shorts
+              {currentAd.shorts_files?.length > 0 && (
+                <span style={{
+                  marginLeft: 6, fontSize: 10, fontWeight: 700,
+                  padding: "1px 6px", borderRadius: 99,
+                  backgroundColor: previewTab === "shorts"
+                    ? "rgba(255,255,255,0.25)"
+                    : "rgba(var(--color-accent-r),var(--color-accent-g),var(--color-accent-b),0.15)",
+                  color: previewTab === "shorts" ? "inherit" : "var(--color-accent)",
+                }}>
+                  {currentAd.shorts_files.length}
+                </span>
+              )}
+            </button>
+            <button
               onClick={() => setPreviewTab("website")}
               className={previewTab === "website" ? "filter-tab--active" : "filter-tab"}
             >
@@ -439,6 +644,7 @@ export default function PreviewPanel({ ads }) {
           {/* Preview content */}
           <SectionCard>
             {previewTab === "creatives" && <CreativesGrid creatives={currentAd.output_files} />}
+            {previewTab === "shorts"    && <ShortsGrid shorts={currentAd.shorts_files} />}
             {previewTab === "website"   && <WebsitePane ad={currentAd} />}
           </SectionCard>
 
@@ -487,6 +693,23 @@ export default function PreviewPanel({ ads }) {
                 </button>
 
                 <button
+                  onClick={() => handleRegen("shorts")}
+                  disabled={!!regenState || !currentAd.output_files?.length}
+                  className={previewTab === "shorts" ? "btn--accent" : "btn--ghost"}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 7 }}
+                  title={!currentAd.output_files?.length ? "Generate ad creatives first" : undefined}
+                >
+                  {regenState === "shorts"
+                    ? <Loader2 size={14} style={{ animation: "spin 0.75s linear infinite" }} />
+                    : <Clapperboard size={14} />
+                  }
+                  {regenState === "shorts"
+                    ? "Generating shorts…"
+                    : currentAd.shorts_files?.length ? "Regenerate Shorts" : "Generate Shorts"
+                  }
+                </button>
+
+                <button
                   onClick={() => handleRegen("website")}
                   disabled={!!regenState}
                   className={previewTab === "website" ? "btn--accent" : "btn--ghost"}
@@ -505,7 +728,9 @@ export default function PreviewPanel({ ads }) {
               {/* Progress hint */}
               {regenState && (
                 <p style={{ fontSize: 12, color: "var(--color-sidebar-text)" }}>
-                  {instructions.trim()
+                  {regenState === "shorts"
+                    ? "Rendering 4-second loops for each creative — this may take 20–40 seconds…"
+                    : instructions.trim()
                     ? "Rewriting strategy with your instructions, then regenerating — this may take 30–60 seconds…"
                     : "Regenerating — this may take 30–60 seconds…"
                   }

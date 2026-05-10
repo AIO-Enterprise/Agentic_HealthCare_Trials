@@ -26,6 +26,7 @@ class Advertisement(Base):
     output_url           = Column(String(1024), nullable=True)
     hosted_url           = Column(String(1024), nullable=True)
     output_files         = Column(JSON, nullable=True)
+    shorts_files         = Column(JSON, nullable=True)
     bot_config           = Column(JSON, nullable=True)
     booking_config       = Column(JSON, nullable=True)   # {slot_duration_minutes, max_per_slot}
     questionnaire        = Column(JSON, nullable=True)

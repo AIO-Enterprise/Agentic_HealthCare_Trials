@@ -43,6 +43,7 @@ class AdvertisementOut(BaseModel):
     output_url: Optional[str] = None
     hosted_url: Optional[str] = None
     output_files: Optional[List[Dict[str, Any]]] = None
+    shorts_files: Optional[List[Dict[str, Any]]] = None
     bot_config: Optional[Dict[str, Any]] = None
     booking_config: Optional[Dict[str, Any]] = None
     questionnaire: Optional[Dict[str, Any]] = None

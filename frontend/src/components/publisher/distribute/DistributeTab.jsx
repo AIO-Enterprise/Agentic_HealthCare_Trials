@@ -168,7 +168,9 @@ export default function DistributeTab({
                 {ad.output_files.slice(0, 6).map((c, i) => (
                   <div key={i} style={{ width: "80px", height: "60px", borderRadius: "6px", flexShrink: 0, border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)", overflow: "hidden" }}>
                     {c.image_url
-                      ? <img src={c.image_url} alt={c.headline} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      ? c.image_url.endsWith(".mp4")
+                        ? <video src={c.image_url} muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        : <img src={c.image_url} alt={c.headline} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                       : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}><Image size={18} style={{ color: "var(--color-sidebar-text)", opacity: 0.35 }} /></div>
                     }
                   </div>
@@ -569,7 +571,9 @@ export function DistributeForm({ platformName, platformConfig, formData, status,
                 style={{ width: "60px", height: "45px", borderRadius: "6px", flexShrink: 0, border: `2px solid ${sel ? "var(--color-accent)" : "var(--color-card-border)"}`, backgroundColor: "var(--color-card-bg)", overflow: "hidden", padding: 0, cursor: "pointer" }}
               >
                 {c.image_url
-                  ? <img src={c.image_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  ? c.image_url.endsWith(".mp4")
+                    ? <video src={c.image_url} muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    : <img src={c.image_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                   : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}><Image size={14} style={{ color: "var(--color-sidebar-text)", opacity: 0.4 }} /></div>
                 }
               </button>

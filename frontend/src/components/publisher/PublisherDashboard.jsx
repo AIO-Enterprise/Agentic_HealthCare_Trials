@@ -12,7 +12,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { PageWithSidebar, MetricSummaryCard } from "../shared/Layout";
+import { PageWithSidebar, MetricSummaryCard, SectionCard } from "../shared/Layout";
 import { adsAPI, analyticsAPI, platformConnectionsAPI } from "../../services/api";
 import {
   Globe, BarChart3, Rocket, Share2, Zap, Eye, SlidersHorizontal, TrendingUp,
@@ -21,6 +21,7 @@ import ManageTab from "./ManageTab";
 import PublisherAnalytics from "./PublisherAnalytics";
 import AdPreviewModal from "./AdPreviewModal";
 import MetaPlatformSettings from "./MetaPlatformSettings";
+import GoogleAdsPlatformSettings from "./GoogleAdsPlatformSettings";
 import OverviewTab from "./overview/OverviewTab";
 import DeployTab from "./deploy/DeployTab";
 import DistributeTab, { SOCIAL_PLATFORMS } from "./distribute/DistributeTab";
@@ -79,10 +80,15 @@ export default function PublisherDashboard() {
   const [distStatus,   setDistStatus]   = useState({});
 
   // Platform connections (OAuth)
-  const [metaConnection,  setMetaConnection]  = useState(null);   // stored connection or null
-  const [metaAccounts,    setMetaAccounts]    = useState(null);   // { ad_accounts, pages }
-  const [connectingMeta,  setConnectingMeta]  = useState(false);
-  const [loadingAccounts, setLoadingAccounts] = useState(false);
+  const [metaConnection,        setMetaConnection]        = useState(null);
+  const [metaAccounts,          setMetaAccounts]          = useState(null);   // { ad_accounts, pages }
+  const [connectingMeta,        setConnectingMeta]        = useState(false);
+  const [loadingAccounts,       setLoadingAccounts]       = useState(false);
+
+  const [googleConnection,      setGoogleConnection]      = useState(null);
+  const [googleAccounts,        setGoogleAccounts]        = useState(null);   // { customers: [...] }
+  const [connectingGoogle,      setConnectingGoogle]      = useState(false);
+  const [loadingGoogleAccounts, setLoadingGoogleAccounts] = useState(false);
 
   // Optimizer state — lifted here so results persist across tab switches
   const [optimizerSuggestions,   setOptimizerSuggestions]   = useState(null);
@@ -103,12 +109,12 @@ export default function PublisherDashboard() {
     }).catch(console.error).finally(() => setLoading(false));
   }, []);
 
-  // Load stored Meta connection on mount
+  // Load stored platform connections on mount
   useEffect(() => {
     platformConnectionsAPI.list()
       .then((connections) => {
-        const meta = connections.find((c) => c.platform === "meta") || null;
-        setMetaConnection(meta);
+        setMetaConnection(connections.find((c) => c.platform === "meta") || null);
+        setGoogleConnection(connections.find((c) => c.platform === "google_ads") || null);
       })
       .catch(console.error);
   }, []);
@@ -203,12 +209,12 @@ export default function PublisherDashboard() {
 
         // Default target countries
         if (!existing.targeting_countries) {
-          seeds.targeting_countries = "AU,IN,US";
+          seeds.targeting_countries = "AU";
         }
 
         // Default currency
         if (!existing.currency) {
-          seeds.currency = "USD";
+          seeds.currency = "AUD";
         }
 
         // Default browser add-on to None; user can switch to WhatsApp/Phone manually
@@ -234,7 +240,12 @@ export default function PublisherDashboard() {
     const fk = `${adId}_${platformConfig.id}`;
     setDistStatus((p) => ({ ...p, [fk]: { status: "posting" } }));
     try {
-      const result = await adsAPI.distributeCreatives(adId, { platform: platformConfig.id, config: distForms[fk] || {} });
+      let result;
+      if (platformConfig.id === "google_ads") {
+        result = await adsAPI.distributeGoogleAds(adId, { config: distForms[fk] || {} });
+      } else {
+        result = await adsAPI.distributeCreatives(adId, { platform: platformConfig.id, config: distForms[fk] || {} });
+      }
       setDistStatus((p) => ({ ...p, [fk]: { status: "posted", result } }));
     } catch (err) {
       setDistStatus((p) => ({ ...p, [fk]: { status: "error", error: err.message } }));
@@ -314,6 +325,74 @@ export default function PublisherDashboard() {
   const handleSelectPage = async (page) => {
     await platformConnectionsAPI.updateMeta({ page_id: page.id, page_name: page.name });
     setMetaConnection((p) => ({ ...p, page_id: page.id, page_name: page.name }));
+  };
+
+  // ── Google Ads OAuth connect ──────────────────────────────────────────────
+  const handleConnectGoogle = async () => {
+    setConnectingGoogle(true);
+    try {
+      const { url } = await platformConnectionsAPI.getOAuthUrl("google");
+      const popup = window.open(url, "google_oauth", "width=620,height=700,scrollbars=yes,resizable=yes");
+
+      const onMessage = async (event) => {
+        if (!event.data || !["google_oauth_success", "google_oauth_error"].includes(event.data.type)) return;
+        window.removeEventListener("message", onMessage);
+        clearInterval(pollClosed);
+
+        if (event.data.type === "google_oauth_success") {
+          const connections = await platformConnectionsAPI.list();
+          const google = connections.find((c) => c.platform === "google_ads") || null;
+          setGoogleConnection(google);
+          if (google) {
+            setLoadingGoogleAccounts(true);
+            try {
+              const accounts = await platformConnectionsAPI.getGoogleAccounts();
+              setGoogleAccounts(accounts);
+            } catch (e) { console.error(e); }
+            finally { setLoadingGoogleAccounts(false); }
+          }
+        } else {
+          alert("Failed to connect Google Ads account. Please try again.");
+        }
+        setConnectingGoogle(false);
+      };
+
+      window.addEventListener("message", onMessage);
+
+      const pollClosed = setInterval(() => {
+        if (popup && popup.closed) {
+          clearInterval(pollClosed);
+          window.removeEventListener("message", onMessage);
+          setConnectingGoogle(false);
+        }
+      }, 600);
+
+    } catch (err) {
+      alert(err.message);
+      setConnectingGoogle(false);
+    }
+  };
+
+  const handleDisconnectGoogle = async () => {
+    if (!window.confirm("Disconnect your Google Ads account? Stored credentials will be removed.")) return;
+    await platformConnectionsAPI.disconnectGoogle();
+    setGoogleConnection(null);
+    setGoogleAccounts(null);
+  };
+
+  const handleLoadGoogleAccounts = async () => {
+    if (googleAccounts) return;
+    setLoadingGoogleAccounts(true);
+    try {
+      const accounts = await platformConnectionsAPI.getGoogleAccounts();
+      setGoogleAccounts(accounts);
+    } catch (err) { alert(err.message); }
+    finally { setLoadingGoogleAccounts(false); }
+  };
+
+  const handleSelectGoogleCustomer = async (customer) => {
+    await platformConnectionsAPI.updateGoogle({ ad_account_id: customer.id, ad_account_name: customer.name });
+    setGoogleConnection((p) => ({ ...p, ad_account_id: customer.id, ad_account_name: customer.name }));
   };
 
   if (loading) return (
@@ -398,14 +477,7 @@ export default function PublisherDashboard() {
           onDistribute={handleDistribute}
           onPreviewAd={setPreviewAd}
           metaConnection={metaConnection}
-          metaAccounts={metaAccounts}
-          connectingMeta={connectingMeta}
-          loadingAccounts={loadingAccounts}
-          onConnectMeta={handleConnectMeta}
-          onDisconnectMeta={handleDisconnectMeta}
-          onLoadMetaAccounts={handleLoadMetaAccounts}
-          onSelectAdAccount={handleSelectAdAccount}
-          onSelectPage={handleSelectPage}
+          googleConnection={googleConnection}
         />
       )}
 
@@ -439,6 +511,14 @@ export default function PublisherDashboard() {
           onLoadMetaAccounts={handleLoadMetaAccounts}
           onSelectAdAccount={handleSelectAdAccount}
           onSelectPage={handleSelectPage}
+          googleConnection={googleConnection}
+          googleAccounts={googleAccounts}
+          connectingGoogle={connectingGoogle}
+          loadingGoogleAccounts={loadingGoogleAccounts}
+          onConnectGoogle={handleConnectGoogle}
+          onDisconnectGoogle={handleDisconnectGoogle}
+          onLoadGoogleAccounts={handleLoadGoogleAccounts}
+          onSelectGoogleCustomer={handleSelectGoogleCustomer}
         />
       )}
 
@@ -452,20 +532,39 @@ export default function PublisherDashboard() {
 function SettingsTab({
   metaConnection, metaAccounts, connectingMeta, loadingAccounts,
   onConnectMeta, onDisconnectMeta, onLoadMetaAccounts, onSelectAdAccount, onSelectPage,
+  googleConnection, googleAccounts, connectingGoogle, loadingGoogleAccounts,
+  onConnectGoogle, onDisconnectGoogle, onLoadGoogleAccounts, onSelectGoogleCustomer,
 }) {
   return (
     <div className="space-y-4">
-      <MetaPlatformSettings
-        connection={metaConnection}
-        accounts={metaAccounts}
-        connecting={connectingMeta}
-        loadingAccounts={loadingAccounts}
-        onConnect={onConnectMeta}
-        onDisconnect={onDisconnectMeta}
-        onLoadAccounts={onLoadMetaAccounts}
-        onSelectAdAccount={onSelectAdAccount}
-        onSelectPage={onSelectPage}
-      />
+      <SectionCard
+        title="Platform Settings"
+        subtitle="Connect your ad accounts once — credentials are stored securely and reused for every publish"
+      >
+        <div className="space-y-3">
+          <MetaPlatformSettings
+            connection={metaConnection}
+            accounts={metaAccounts}
+            connecting={connectingMeta}
+            loadingAccounts={loadingAccounts}
+            onConnect={onConnectMeta}
+            onDisconnect={onDisconnectMeta}
+            onLoadAccounts={onLoadMetaAccounts}
+            onSelectAdAccount={onSelectAdAccount}
+            onSelectPage={onSelectPage}
+          />
+          <GoogleAdsPlatformSettings
+            connection={googleConnection}
+            accounts={googleAccounts}
+            connecting={connectingGoogle}
+            loadingAccounts={loadingGoogleAccounts}
+            onConnect={onConnectGoogle}
+            onDisconnect={onDisconnectGoogle}
+            onLoadAccounts={onLoadGoogleAccounts}
+            onSelectCustomer={onSelectGoogleCustomer}
+          />
+        </div>
+      </SectionCard>
     </div>
   );
 }

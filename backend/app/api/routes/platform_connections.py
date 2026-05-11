@@ -53,7 +53,7 @@ def _popup_html(msg_type: str, message: str, extra: str = "") -> str:
 <script>
   try {{
     window.opener && window.opener.postMessage(
-      {{type: '{msg_type}', platform: 'meta'{extra}}}, '*'
+      {{type: '{msg_type}'{extra}}}, '*'
     );
   }} catch(e) {{}}
   setTimeout(() => window.close(), 1200);
@@ -126,10 +126,10 @@ async def meta_oauth_callback(
     """
     if error:
         msg = error_description or error
-        return HTMLResponse(_popup_html("meta_oauth_error", f"Connection denied: {msg}"))
+        return HTMLResponse(_popup_html("meta_oauth_error", f"Connection denied: {msg}", ", platform: 'meta'"))
 
     if not code or not state:
-        return HTMLResponse(_popup_html("meta_oauth_error", "Missing code or state parameter"))
+        return HTMLResponse(_popup_html("meta_oauth_error", "Missing code or state parameter", ", platform: 'meta'"))
 
     # Decode state JWT to recover user identity
     try:
@@ -137,7 +137,7 @@ async def meta_oauth_callback(
         user_id: str = payload["user_id"]
         company_id: str = payload["company_id"]
     except (JWTError, Exception):
-        return HTMLResponse(_popup_html("meta_oauth_error", "Invalid or expired state — please try again"))
+        return HTMLResponse(_popup_html("meta_oauth_error", "Invalid or expired state — please try again", ", platform: 'meta'"))
 
     try:
         from app.services.meta_ads_service import MetaAdsService
@@ -196,9 +196,9 @@ async def meta_oauth_callback(
     except Exception as exc:
         logger.error("Meta OAuth callback failed: %s", exc, exc_info=True)
         err_msg = str(exc)[:120]
-        return HTMLResponse(_popup_html("meta_oauth_error", f"Connection failed: {err_msg}"))
+        return HTMLResponse(_popup_html("meta_oauth_error", f"Connection failed: {err_msg}", ", platform: 'meta'"))
 
-    return HTMLResponse(_popup_html("meta_oauth_success", "Connected successfully!"))
+    return HTMLResponse(_popup_html("meta_oauth_success", "Connected successfully!", ", platform: 'meta'"))
 
 
 # ─── 3. List connections ──────────────────────────────────────────────────────
@@ -308,6 +308,229 @@ async def disconnect_meta(
         select(PlatformConnection).where(
             PlatformConnection.company_id == user.company_id,
             PlatformConnection.platform == "meta",
+        )
+    )
+    conn = result.scalar_one_or_none()
+    if conn:
+        await db.delete(conn)
+        await db.commit()
+    return {"ok": True}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Google Ads OAuth
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Flow:
+#   1. GET  /api/platform-connections/google/oauth-url   → Google consent URL
+#   2. GET  /api/platform-connections/google/callback    → exchange code → tokens,
+#                                                           store refresh_token, close popup
+#   3. GET  /api/platform-connections/google/accounts    → list accessible customers
+#   4. PATCH /api/platform-connections/google            → save selected customer_id
+#   5. DELETE /api/platform-connections/google           → disconnect
+#
+# Token strategy:
+#   • We store only the refresh_token (permanent unless revoked) in access_token column.
+#   • On every API call the caller exchanges refresh_token → fresh 1-hr access_token.
+#   • No token_expires_at tracking needed.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+# ─── 1. OAuth URL ─────────────────────────────────────────────────────────────
+
+@router.get("/google/oauth-url")
+async def get_google_oauth_url(
+    user: User = Depends(require_roles([UserRole.PUBLISHER])),
+):
+    """Return the Google OAuth consent URL. Opens in a popup on the frontend."""
+    if not settings.GOOGLE_ADS_CLIENT_ID:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Google Ads credentials are not configured on this server. "
+                "Set GOOGLE_ADS_CLIENT_ID and GOOGLE_ADS_CLIENT_SECRET in your .env file."
+            ),
+        )
+
+    state = pyjwt.encode(
+        {
+            "user_id":    user.id,
+            "company_id": user.company_id,
+            "exp":        datetime.now(timezone.utc) + timedelta(minutes=10),
+        },
+        settings.SECRET_KEY,
+        algorithm=settings.JWT_ALGORITHM,
+    )
+
+    from app.services.google_ads_service import GoogleAdsService
+    url = GoogleAdsService.build_oauth_url(
+        client_id=settings.GOOGLE_ADS_CLIENT_ID,
+        redirect_uri=settings.GOOGLE_ADS_OAUTH_REDIRECT_URI,
+        state=state,
+    )
+    return {"url": url}
+
+
+# ─── 2. OAuth Callback ────────────────────────────────────────────────────────
+
+@router.get("/google/callback", response_class=HTMLResponse)
+async def google_oauth_callback(
+    code:              str | None = Query(default=None),
+    state:             str | None = Query(default=None),
+    error:             str | None = Query(default=None),
+    error_description: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Google redirects here after the user grants permissions.
+    Exchanges code → (access_token, refresh_token), stores refresh_token in DB,
+    then sends postMessage to parent window and closes the popup.
+    """
+    if error:
+        msg = error_description or error
+        return HTMLResponse(_popup_html("google_oauth_error", f"Connection denied: {msg}", ", platform: 'google'"))
+
+    if not code or not state:
+        return HTMLResponse(_popup_html("google_oauth_error", "Missing code or state parameter", ", platform: 'google'"))
+
+    try:
+        payload    = pyjwt.decode(state, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        user_id:    str = payload["user_id"]
+        company_id: str = payload["company_id"]
+    except (JWTError, Exception):
+        return HTMLResponse(_popup_html("google_oauth_error", "Invalid or expired state — please try again", ", platform: 'google'"))
+
+    try:
+        from app.services.google_ads_service import GoogleAdsService
+
+        access_token, refresh_token = GoogleAdsService.exchange_code_for_tokens(
+            code=code,
+            client_id=settings.GOOGLE_ADS_CLIENT_ID,
+            client_secret=settings.GOOGLE_ADS_CLIENT_SECRET,
+            redirect_uri=settings.GOOGLE_ADS_OAUTH_REDIRECT_URI,
+        )
+
+        google_user = GoogleAdsService.fetch_me(access_token)
+        google_user_id = google_user.get("id")
+
+        # Upsert: one connection per company per platform
+        result = await db.execute(
+            select(PlatformConnection).where(
+                PlatformConnection.company_id == company_id,
+                PlatformConnection.platform   == "google_ads",
+            )
+        )
+        conn = result.scalar_one_or_none()
+
+        if conn:
+            # Reconnect — update tokens, preserve selected customer
+            conn.access_token  = refresh_token
+            conn.meta_user_id  = google_user_id
+            conn.user_id       = user_id
+        else:
+            conn = PlatformConnection(
+                company_id    = company_id,
+                user_id       = user_id,
+                platform      = "google_ads",
+                access_token  = refresh_token,   # we store refresh_token here
+                meta_user_id  = google_user_id,
+            )
+            db.add(conn)
+
+        await db.commit()
+
+    except Exception as exc:
+        logger.error("Google OAuth callback failed: %s", exc, exc_info=True)
+        err_msg = str(exc)[:120]
+        return HTMLResponse(_popup_html("google_oauth_error", f"Connection failed: {err_msg}", ", platform: 'google'"))
+
+    return HTMLResponse(_popup_html("google_oauth_success", "Connected successfully!", ", platform: 'google'"))
+
+
+# ─── 3. List accessible customers ─────────────────────────────────────────────
+
+@router.get("/google/accounts")
+async def list_google_accounts(
+    user: User = Depends(require_roles([UserRole.PUBLISHER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Refresh the access_token and list all Google Ads customer accounts
+    accessible to the connected user.
+    """
+    result = await db.execute(
+        select(PlatformConnection).where(
+            PlatformConnection.company_id == user.company_id,
+            PlatformConnection.platform   == "google_ads",
+        )
+    )
+    conn = result.scalar_one_or_none()
+    if not conn:
+        raise HTTPException(status_code=404, detail="Google Ads account not connected")
+
+    if not settings.GOOGLE_ADS_DEVELOPER_TOKEN:
+        raise HTTPException(
+            status_code=503,
+            detail="GOOGLE_ADS_DEVELOPER_TOKEN is not configured on this server.",
+        )
+
+    from app.services.google_ads_service import GoogleAdsService
+    try:
+        access_token = GoogleAdsService.refresh_access_token(
+            refresh_token=conn.access_token,
+            client_id=settings.GOOGLE_ADS_CLIENT_ID,
+            client_secret=settings.GOOGLE_ADS_CLIENT_SECRET,
+        )
+        customers = GoogleAdsService.list_accessible_customers(
+            access_token=access_token,
+            developer_token=settings.GOOGLE_ADS_DEVELOPER_TOKEN,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    return {"customers": customers}
+
+
+# ─── 4. Save selected customer account ────────────────────────────────────────
+
+@router.patch("/google")
+async def update_google_connection(
+    body: dict,
+    user: User = Depends(require_roles([UserRole.PUBLISHER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist the publisher's selected Google Ads customer account."""
+    result = await db.execute(
+        select(PlatformConnection).where(
+            PlatformConnection.company_id == user.company_id,
+            PlatformConnection.platform   == "google_ads",
+        )
+    )
+    conn = result.scalar_one_or_none()
+    if not conn:
+        raise HTTPException(status_code=404, detail="Google Ads account not connected")
+
+    if "ad_account_id" in body:
+        conn.ad_account_id = body["ad_account_id"]
+    if "ad_account_name" in body:
+        conn.ad_account_name = body["ad_account_name"]
+
+    await db.commit()
+    return {"ok": True}
+
+
+# ─── 5. Disconnect ─────────────────────────────────────────────────────────────
+
+@router.delete("/google")
+async def disconnect_google(
+    user: User = Depends(require_roles([UserRole.PUBLISHER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove the Google Ads connection for this company."""
+    result = await db.execute(
+        select(PlatformConnection).where(
+            PlatformConnection.company_id == user.company_id,
+            PlatformConnection.platform   == "google_ads",
         )
     )
     conn = result.scalar_one_or_none()

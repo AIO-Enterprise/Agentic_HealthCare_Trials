@@ -1,5 +1,4 @@
 import React, { useState } from "react";
-import { SectionCard } from "../shared/Layout";
 import { AlertCircle, Link2, Link2Off, RefreshCw, Loader2, ChevronDown as ChevDown } from "lucide-react";
 
 // ─── Platform Settings Card ───────────────────────────────────────────────────
@@ -35,11 +34,6 @@ export default function MetaPlatformSettings({
   };
 
   return (
-    <SectionCard
-      title="Platform Settings"
-      subtitle="Connect your ad accounts once — credentials are stored securely and reused for every publish"
-    >
-      {/* ── Meta/Instagram row ── */}
       <div style={{
         display: "flex", alignItems: "flex-start", gap: 16, flexWrap: "wrap",
         padding: "16px", borderRadius: "10px",
@@ -191,6 +185,5 @@ export default function MetaPlatformSettings({
           </div>
         )}
       </div>
-    </SectionCard>
   );
 }

@@ -672,6 +672,12 @@ export const adsAPI = {
       body: JSON.stringify(data),
     }),
 
+  distributeGoogleAds: (adId, data) =>
+    request(`/advertisements/${adId}/distribute-google`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
   generateQuestionnaire: (adId) =>
     request(`/advertisements/${adId}/generate-questionnaire`, { method: "POST" }),
 
@@ -827,6 +833,20 @@ export const platformConnectionsAPI = {
   // Remove Meta connection
   disconnectMeta: () =>
     request("/platform-connections/meta", { method: "DELETE" }),
+
+  // Fetch accessible Google Ads customer accounts
+  getGoogleAccounts: () => request("/platform-connections/google/accounts"),
+
+  // Save selected Google Ads customer account
+  updateGoogle: (data) =>
+    request("/platform-connections/google", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  // Remove Google Ads connection
+  disconnectGoogle: () =>
+    request("/platform-connections/google", { method: "DELETE" }),
 };
 
 // ─── M7/M15: Analytics ───────────────────────────────────────────────────────

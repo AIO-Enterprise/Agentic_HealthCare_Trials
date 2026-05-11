@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { SectionCard } from "../../shared/Layout";
 import { adsAPI } from "../../../services/api";
 import { hasType, typeLabel } from "../publisherUtils";
-import MetaPlatformSettings from "../MetaPlatformSettings";
 import {
   Image, AlertCircle, Share2, Link2, Link2Off, SlidersHorizontal,
   Eye, CheckCircle2, ExternalLink, Loader2,
@@ -77,7 +76,12 @@ export const SOCIAL_PLATFORMS = {
       { key: "destination_url", label: "Destination URL", type: "text", placeholder: "https://…", required: true },
     ],
   },
-  "Google Ads": { id: "google_ads", active: false, fields: [] },
+  "Google Ads": {
+    id: "google_ads", active: true, usesOAuth: true,
+    fields: [
+      { key: "destination_url", label: "Destination URL", type: "text", placeholder: "https://…", required: true },
+    ],
+  },
   "LinkedIn":   { id: "linkedin",   active: false, fields: [] },
   "YouTube":    { id: "youtube",    active: false, fields: [] },
   "Twitter/X":  { id: "twitter",    active: false, fields: [] },
@@ -88,9 +92,7 @@ export const SOCIAL_PLATFORMS = {
 export default function DistributeTab({
   ads, distExpanded, distForms, distStatus,
   onSelectPlatform, onUpdateForm, onDistribute, onPreviewAd,
-  metaConnection, metaAccounts, connectingMeta, loadingAccounts,
-  onConnectMeta, onDisconnectMeta, onLoadMetaAccounts,
-  onSelectAdAccount, onSelectPage,
+  metaConnection, googleConnection,
 }) {
   const navigate = useNavigate();
   const distributable = ads.filter(
@@ -105,7 +107,8 @@ export default function DistributeTab({
         padding: "12px 16px", borderRadius: 10,
         border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-card-bg)",
       }}>
-        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, minWidth: 200 }}>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minWidth: 200 }}>
+          {/* Meta status */}
           {metaConnection ? (
             <>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.75rem", fontWeight: 700, color: "#16a34a", backgroundColor: "rgba(34,197,94,0.1)", padding: "2px 10px", borderRadius: 999 }}>
@@ -125,6 +128,32 @@ export default function DistributeTab({
           ) : (
             <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.75rem", fontWeight: 700, color: "var(--color-muted)", backgroundColor: "var(--color-page-bg)", padding: "2px 10px", borderRadius: 999 }}>
               <Link2Off size={10} /> Meta not connected
+            </span>
+          )}
+
+          {/* Divider */}
+          <span style={{ width: 1, height: 16, backgroundColor: "var(--color-card-border)", flexShrink: 0 }} />
+
+          {/* Google Ads status */}
+          {googleConnection ? (
+            <>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.75rem", fontWeight: 700, color: "#16a34a", backgroundColor: "rgba(34,197,94,0.1)", padding: "2px 10px", borderRadius: 999 }}>
+                <Link2 size={10} /> Google Ads Connected
+              </span>
+              {googleConnection.ad_account_name && (
+                <span style={{ fontSize: "0.75rem", color: "var(--color-muted)" }}>
+                  {googleConnection.ad_account_name}
+                </span>
+              )}
+              {!googleConnection.ad_account_id && (
+                <span style={{ fontSize: "0.73rem", color: "#ca8a04", fontWeight: 600 }}>
+                  — select a customer account in Settings
+                </span>
+              )}
+            </>
+          ) : (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.75rem", fontWeight: 700, color: "var(--color-muted)", backgroundColor: "var(--color-page-bg)", padding: "2px 10px", borderRadius: 999 }}>
+              <Link2Off size={10} /> Google Ads not connected
             </span>
           )}
         </div>
@@ -218,6 +247,7 @@ export default function DistributeTab({
                     status={distStatus[fk]}
                     creatives={ad.output_files}
                     metaConnection={metaConnection}
+                    googleConnection={googleConnection}
                     onChange={(key, val) => onUpdateForm(ad.id, platformConfig.id, key, val)}
                     onPost={() => onDistribute(ad.id, platformConfig)}
                   />
@@ -377,10 +407,12 @@ export function CountryPicker({ value, onChange }) {
 }
 
 // ─── Distribute Form ──────────────────────────────────────────────────────────
-export function DistributeForm({ platformName, platformConfig, formData, status, creatives, metaConnection, onChange, onPost }) {
+export function DistributeForm({ platformName, platformConfig, formData, status, creatives, metaConnection, googleConnection, onChange, onPost }) {
   const isPosting = status?.status === "posting";
   const isPosted  = status?.status === "posted";
   const isError   = status?.status === "error";
+
+  const isGoogle = platformConfig.id === "google_ads";
 
   const inputStyle = {
     width: "100%", padding: "8px 12px", borderRadius: "8px", fontSize: "0.83rem",
@@ -397,41 +429,60 @@ export function DistributeForm({ platformName, platformConfig, formData, status,
     </span>
   );
 
-  // For OAuth platforms, check if connection is ready
-  const isMetaReady = !platformConfig.usesOAuth || (metaConnection?.ad_account_id && metaConnection?.page_id);
-  const metaNotConnected = platformConfig.usesOAuth && !metaConnection;
-  const metaMissingSelection = platformConfig.usesOAuth && metaConnection && (!metaConnection.ad_account_id || !metaConnection.page_id);
+  // Resolve the right OAuth connection for this platform
+  const oauthConnection = isGoogle ? googleConnection : metaConnection;
+
+  const isReady = !platformConfig.usesOAuth || (
+    isGoogle
+      ? !!oauthConnection?.ad_account_id
+      : (oauthConnection?.ad_account_id && oauthConnection?.page_id)
+  );
+  const notConnected      = platformConfig.usesOAuth && !oauthConnection;
+  const missingSelection  = platformConfig.usesOAuth && oauthConnection && !isReady;
+
+  const platformLabel = isGoogle ? "Google Ads" : "Meta";
 
   return (
     <div style={{ padding: "20px", borderRadius: "12px", border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)" }}>
       <p style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--color-input-text)", marginBottom: "4px" }}>
-        Publish to {platformName} via Marketing API
+        Publish to {platformName} via {isGoogle ? "Google Ads API" : "Marketing API"}
       </p>
       <p style={{ fontSize: "0.75rem", color: "var(--color-muted)", marginBottom: "16px" }}>
-        All settings below are sent directly to Meta's Marketing API — no manual setup in Ads Manager needed. Ads go <strong>ACTIVE</strong> immediately and can be paused from the Manage Ads tab.
+        {isGoogle
+          ? "Settings below are sent directly to the Google Ads API — no manual setup in Ads Manager needed. Ads go ACTIVE immediately."
+          : <>All settings below are sent directly to Meta's Marketing API — no manual setup in Ads Manager needed. Ads go <strong>ACTIVE</strong> immediately and can be paused from the Manage Ads tab.</>
+        }
       </p>
 
       {/* Connection status banner for OAuth platforms */}
-      {platformConfig.usesOAuth && metaConnection && (
+      {platformConfig.usesOAuth && oauthConnection && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: "8px", backgroundColor: "rgba(34,197,94,0.07)", border: "1px solid rgba(34,197,94,0.25)", marginBottom: "16px" }}>
           <CheckCircle2 size={13} style={{ color: "#22c55e", flexShrink: 0 }} />
           <p style={{ fontSize: "0.78rem", color: "#16a34a" }}>
-            Publishing as <strong>{metaConnection.page_name || metaConnection.page_id}</strong> · Ad Account: <strong>{metaConnection.ad_account_name || metaConnection.ad_account_id}</strong>
+            {isGoogle
+              ? <>Publishing to customer: <strong>{oauthConnection.ad_account_name || oauthConnection.ad_account_id}</strong></>
+              : <>Publishing as <strong>{oauthConnection.page_name || oauthConnection.page_id}</strong> · Ad Account: <strong>{oauthConnection.ad_account_name || oauthConnection.ad_account_id}</strong></>
+            }
           </p>
         </div>
       )}
 
       {/* Warn if not connected or incomplete */}
-      {metaNotConnected && (
+      {notConnected && (
         <div style={{ display: "flex", gap: 8, padding: "10px 12px", borderRadius: "8px", backgroundColor: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.22)", marginBottom: "16px" }}>
           <AlertCircle size={14} style={{ color: "#ef4444", flexShrink: 0, marginTop: 1 }} />
-          <p style={{ fontSize: "0.78rem", color: "#ef4444" }}>Connect your Meta account in Platform Settings above before publishing.</p>
+          <p style={{ fontSize: "0.78rem", color: "#ef4444" }}>Connect your {platformLabel} account in Platform Settings above before publishing.</p>
         </div>
       )}
-      {metaMissingSelection && (
+      {missingSelection && (
         <div style={{ display: "flex", gap: 8, padding: "10px 12px", borderRadius: "8px", backgroundColor: "rgba(234,179,8,0.08)", border: "1px solid rgba(234,179,8,0.3)", marginBottom: "16px" }}>
           <AlertCircle size={14} style={{ color: "#ca8a04", flexShrink: 0, marginTop: 1 }} />
-          <p style={{ fontSize: "0.78rem", color: "#92400e" }}>Select an Ad Account and Facebook Page in Platform Settings above.</p>
+          <p style={{ fontSize: "0.78rem", color: "#92400e" }}>
+            {isGoogle
+              ? "Select a Customer Account in Platform Settings above."
+              : "Select an Ad Account and Facebook Page in Platform Settings above."
+            }
+          </p>
         </div>
       )}
 
@@ -478,7 +529,7 @@ export function DistributeForm({ platformName, platformConfig, formData, status,
             </div>
             {/* Currency selector */}
             <select
-              value={formData.currency || "USD"}
+              value={formData.currency || "AUD"}
               onChange={(e) => onChange("currency", e.target.value)}
               style={{
                 padding: "8px 10px", borderRadius: "8px", fontSize: "0.8rem",
@@ -496,7 +547,7 @@ export function DistributeForm({ platformName, platformConfig, formData, status,
             const budget = parseFloat(formData.daily_budget);
             const numSelected = formData.selected_creatives?.length || 0;
             const numCreatives = numSelected > 0 ? numSelected : Math.min(1, creatives.length);
-            const currency = formData.currency || "USD";
+            const currency = formData.currency || "AUD";
             if (!isNaN(budget) && budget > 0 && numCreatives > 0) {
               const perCreative = (budget / numCreatives).toFixed(2);
               return (
@@ -597,28 +648,34 @@ export function DistributeForm({ platformName, platformConfig, formData, status,
           <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
             <CheckCircle2 size={14} style={{ color: "var(--color-accent)", flexShrink: 0 }} />
             <p style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--color-accent)" }}>
-              Campaign created on Meta — ads are ACTIVE and serving
+              {isGoogle
+                ? "Campaign created on Google Ads — ads are ACTIVE and serving"
+                : "Campaign created on Meta — ads are ACTIVE and serving"
+              }
             </p>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.75rem", color: "var(--color-muted)", marginBottom: 10 }}>
             <span>Campaign ID: <code style={{ fontFamily: "monospace" }}>{status.result.campaign_id}</code></span>
-            <span>Ad Set ID: <code style={{ fontFamily: "monospace" }}>{status.result.adset_id}</code></span>
+            {isGoogle
+              ? <span>Ad Group ID: <code style={{ fontFamily: "monospace" }}>{status.result.ad_group_id}</code></span>
+              : <span>Ad Set ID: <code style={{ fontFamily: "monospace" }}>{status.result.adset_id}</code></span>
+            }
             <span>Ads created: {status.result.ad_ids?.length ?? 0}</span>
           </div>
           <a href={status.result.ads_manager_url} target="_blank" rel="noreferrer" className="btn--inline-action--success" style={{ fontSize: "0.8rem" }}>
-            <ExternalLink size={11} /> Open in Meta Ads Manager
+            <ExternalLink size={11} /> {isGoogle ? "Open in Google Ads Manager" : "Open in Meta Ads Manager"}
           </a>
         </div>
       )}
 
       <button
         onClick={onPost}
-        disabled={isPosting || !isMetaReady}
+        disabled={isPosting || !isReady}
         className="btn--accent"
-        style={{ display: "inline-flex", alignItems: "center", gap: "8px", opacity: (isPosting || !isMetaReady) ? 0.5 : 1 }}
+        style={{ display: "inline-flex", alignItems: "center", gap: "8px", opacity: (isPosting || !isReady) ? 0.5 : 1 }}
       >
         {isPosting ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Share2 size={14} />}
-        {isPosting ? "Publishing to Meta…" : isPosted ? "Republish" : `Publish to ${platformName}`}
+        {isPosting ? `Publishing to ${platformName}…` : isPosted ? "Republish" : `Publish to ${platformName}`}
       </button>
     </div>
   );

@@ -873,18 +873,20 @@ Respond with ONLY a valid JSON object, no markdown:
                 "BEFORE asking them to pick a time. Use the returned list to "
                 "present real options conversationally."
             ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "date": {
-                        "type": "string",
-                        "description": "The date the caller prefers. Use YYYY-MM-DD if known, or natural language like 'next Monday' or 'tomorrow'.",
+            "api_schema": {
+                "url": f"{base}/check-slots",
+                "method": "POST",
+                "request_body_schema": {
+                    "type": "object",
+                    "properties": {
+                        "date": {
+                            "type": "string",
+                            "description": "The date the caller prefers. Use YYYY-MM-DD if known, or natural language like 'next Monday' or 'tomorrow'.",
+                        },
                     },
+                    "required": ["date"],
                 },
-                "required": ["date"],
             },
-            "url": f"{base}/check-slots",
-            "method": "POST",
         }
 
         # Tool 2 — book the exact slot the caller confirmed
@@ -897,21 +899,23 @@ Respond with ONLY a valid JSON object, no markdown:
                 "the available times have been presented to the caller, and "
                 "the caller has said which time they want."
             ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "candidate_name":             {"type": "string", "description": "Full name of the candidate"},
-                    "date":                       {"type": "string", "description": "Confirmed appointment date in YYYY-MM-DD format"},
-                    "time":                       {"type": "string", "description": "Confirmed slot time in HH:MM 24-hour format, e.g. '10:00'"},
-                    "candidate_phone":            {"type": "string", "description": "Candidate's phone number"},
-                    "candidate_email":            {"type": "string", "description": "Candidate's email address if provided"},
-                    "elevenlabs_conversation_id": {"type": "string", "description": "The current ElevenLabs conversation ID (use system.conversation_id)"},
-                    "notes":                      {"type": "string", "description": "Any extra context from the conversation"},
+            "api_schema": {
+                "url": f"{base}/book-slot",
+                "method": "POST",
+                "request_body_schema": {
+                    "type": "object",
+                    "properties": {
+                        "candidate_name":             {"type": "string", "description": "Full name of the candidate"},
+                        "date":                       {"type": "string", "description": "Confirmed appointment date in YYYY-MM-DD format"},
+                        "time":                       {"type": "string", "description": "Confirmed slot time in HH:MM 24-hour format, e.g. '10:00'"},
+                        "candidate_phone":            {"type": "string", "description": "Candidate's phone number"},
+                        "candidate_email":            {"type": "string", "description": "Candidate's email address if provided"},
+                        "elevenlabs_conversation_id": {"type": "string", "description": "The current ElevenLabs conversation ID (use system.conversation_id)"},
+                        "notes":                      {"type": "string", "description": "Any extra context from the conversation"},
+                    },
+                    "required": ["candidate_name", "date", "time"],
                 },
-                "required": ["candidate_name", "date", "time"],
             },
-            "url": f"{base}/book-slot",
-            "method": "POST",
         }
 
         tools = [check_slots_tool, booking_tool] if public_url else []

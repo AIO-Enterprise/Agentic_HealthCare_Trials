@@ -72,6 +72,14 @@ class Settings(BaseSettings):
     META_APP_SECRET: Optional[str] = None
     META_OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/platform-connections/meta/callback"
 
+    # Google Ads – OAuth credentials for Google Ads publishing
+    # Create credentials at https://console.cloud.google.com → APIs & Services → Credentials
+    # Enable the Google Ads API and obtain a developer token from your Google Ads manager account.
+    GOOGLE_ADS_CLIENT_ID: Optional[str] = None
+    GOOGLE_ADS_CLIENT_SECRET: Optional[str] = None
+    GOOGLE_ADS_DEVELOPER_TOKEN: Optional[str] = None
+    GOOGLE_ADS_OAUTH_REDIRECT_URI: str = "http://localhost:8001/api/platform-connections/google/callback"
+
     # ElevenLabs
     ELEVENLABS_API_KEY: Optional[str] = None
     ELEVENLABS_VOICE_ID: str = "EXAVITQu4vr4xnSDxMaL"  # Default: Rachel

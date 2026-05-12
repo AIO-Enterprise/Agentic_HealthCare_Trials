@@ -5,7 +5,7 @@ import { adsAPI } from "../../../services/api";
 import { hasType, typeLabel } from "../publisherUtils";
 import {
   Image, AlertCircle, Share2, Link2, Link2Off, SlidersHorizontal,
-  Eye, CheckCircle2, ExternalLink, Loader2,
+  Eye, CheckCircle2, ExternalLink, Loader2, Film,
 } from "lucide-react";
 
 // ─── Common currencies for Meta ad accounts ──────────────────────────────────
@@ -182,7 +182,11 @@ export default function DistributeTab({
             <SectionCard
               key={ad.id}
               title={ad.title}
-              subtitle={`${ad.output_files.length} creative${ad.output_files.length !== 1 ? "s" : ""} ready · ${ad.platforms?.join(", ") || "no platforms configured"}`}
+              subtitle={[
+                `${ad.output_files.length} creative${ad.output_files.length !== 1 ? "s" : ""} ready`,
+                ad.shorts_files?.length ? `${ad.shorts_files.length} short${ad.shorts_files.length !== 1 ? "s" : ""}` : null,
+                ad.platforms?.join(", ") || "no platforms configured",
+              ].filter(Boolean).join(" · ")}
             >
               {/* Creative strip */}
               <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
@@ -210,6 +214,43 @@ export default function DistributeTab({
                   </div>
                 )}
               </div>
+
+              {/* Short Videos strip */}
+              {ad.shorts_files?.length > 0 && (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
+                    <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)", flex: 1, display: "flex", alignItems: "center", gap: 5 }}>
+                      <Film size={11} /> Short Videos
+                    </p>
+                    <button
+                      className="btn--inline-action--ghost"
+                      onClick={() => onPreviewAd({ ...ad, output_files: ad.shorts_files, title: `${ad.title} — Shorts` })}
+                    >
+                      <Eye size={11} /> Preview All
+                    </button>
+                  </div>
+                  <div style={{ display: "flex", gap: "8px", marginBottom: "20px", overflowX: "auto", paddingBottom: "4px" }}>
+                    {ad.shorts_files.slice(0, 6).map((c, i) => (
+                      <div
+                        key={i}
+                        onClick={() => onPreviewAd({ ...ad, output_files: ad.shorts_files, title: `${ad.title} — Shorts` })}
+                        title="Click to preview"
+                        style={{ width: "45px", height: "80px", borderRadius: "6px", flexShrink: 0, border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)", overflow: "hidden", position: "relative", cursor: "pointer" }}
+                      >
+                        {c.image_url
+                          ? <video src={c.image_url} muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}><Film size={14} style={{ color: "var(--color-sidebar-text)", opacity: 0.35 }} /></div>
+                        }
+                      </div>
+                    ))}
+                    {ad.shorts_files.length > 6 && (
+                      <div style={{ width: "45px", height: "80px", borderRadius: "6px", flexShrink: 0, border: "1px solid var(--color-card-border)", backgroundColor: "var(--color-page-bg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <span style={{ fontSize: "0.75rem", color: "var(--color-sidebar-text)" }}>+{ad.shorts_files.length - 6}</span>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
 
               {/* Platform tiles */}
               <p style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-sidebar-text)", marginBottom: "10px" }}>

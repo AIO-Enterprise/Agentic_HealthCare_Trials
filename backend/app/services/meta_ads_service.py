@@ -237,6 +237,56 @@ class MetaAdsService:
             return img_data["hash"]
         raise RuntimeError("Meta did not return an image hash")
 
+    # ─── Step 1 (video): Upload video ─────────────────────────────────────────
+
+    async def upload_video(self, disk_path: str) -> str:
+        """
+        Upload an mp4 file to Meta advideos via multipart and return the video_id.
+        Polls until the video finishes processing before returning.
+        """
+        path = Path(disk_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Ad video not found on disk: {disk_path}")
+
+        url = self._url(f"{self.ad_account_id}/advideos")
+        video_bytes = path.read_bytes()
+
+        def _sync_upload() -> dict:
+            resp = requests.post(
+                url,
+                data={"access_token": self.access_token, "name": path.stem},
+                files={"source": (path.name, video_bytes, "video/mp4")},
+                timeout=180,
+            )
+            return resp.json()
+
+        body = await asyncio.to_thread(_sync_upload)
+        self._raise_if_error(body)
+        video_id = body["id"]
+        logger.info("Video uploaded, id=%s — waiting for Meta to process...", video_id)
+        await self._wait_for_video_ready(video_id)
+        return video_id
+
+    async def _wait_for_video_ready(self, video_id: str, max_wait: int = 300) -> None:
+        """Poll GET /{video_id}?fields=status until video_status is 'ready'."""
+        import time as _time
+        deadline = _time.monotonic() + max_wait
+        while _time.monotonic() < deadline:
+            body = await self._get(video_id, params={"fields": "status"})
+            status = body.get("status") or {}
+            if isinstance(status, dict):
+                video_status = status.get("video_status", "")
+                if video_status == "ready":
+                    return
+                if video_status == "error":
+                    raise RuntimeError(
+                        f"Meta video processing failed for {video_id}: {status}"
+                    )
+            await asyncio.sleep(5)
+        raise RuntimeError(
+            f"Video {video_id} did not become ready within {max_wait}s"
+        )
+
     # ─── Step 2: Create Campaign ───────────────────────────────────────────────
 
     async def create_campaign(self, name: str) -> str:
@@ -378,6 +428,70 @@ class MetaAdsService:
         object_story_spec: dict = {
             "page_id": page_id,
             "link_data": link_data,
+        }
+        if instagram_actor_id:
+            object_story_spec["instagram_actor_id"] = instagram_actor_id
+
+        result = await self._post(
+            f"{self.ad_account_id}/adcreatives",
+            {
+                "name": name,
+                "object_story_spec": json.dumps(object_story_spec),
+            },
+        )
+        return result["id"]
+
+    # ─── Step 4 (video): Create Video Ad Creative ─────────────────────────────
+
+    async def create_video_creative(
+        self,
+        name: str,
+        page_id: str,
+        video_id: str,
+        headline: str,
+        body: str,
+        cta_type: str,
+        link_url: str,
+        instagram_actor_id: Optional[str] = None,
+        addon_type: Optional[str] = None,
+        addon_phone: Optional[str] = None,
+    ) -> str:
+        """
+        Create a video ad creative using video_data in object_story_spec.
+        Mirrors create_creative() but uses a video_id instead of image_hash.
+        """
+        video_data: dict = {
+            "video_id": video_id,
+            "message": body or "Learn more about this opportunity.",
+            "title": headline,
+            "link_description": link_url,
+        }
+
+        if addon_type == "whatsapp" and addon_phone:
+            raw = addon_phone.replace(" ", "").replace("-", "")
+            wa_number = raw.lstrip("+")
+            video_data["call_to_action"] = {
+                "type": "WHATSAPP_MESSAGE",
+                "value": {
+                    "link": f"https://wa.me/{wa_number}",
+                    "whatsapp_number": raw if raw.startswith("+") else f"+{wa_number}",
+                },
+            }
+        elif addon_type == "phone" and addon_phone:
+            raw = addon_phone.replace(" ", "").replace("-", "")
+            video_data["call_to_action"] = {
+                "type": "CALL_NOW",
+                "value": {"link": f"tel:{raw}"},
+            }
+        else:
+            video_data["call_to_action"] = {
+                "type": cta_type,
+                "value": {"link": link_url},
+            }
+
+        object_story_spec: dict = {
+            "page_id": page_id,
+            "video_data": video_data,
         }
         if instagram_actor_id:
             object_story_spec["instagram_actor_id"] = instagram_actor_id
@@ -571,28 +685,48 @@ class MetaAdsService:
             # Resolve image_url (/outputs/…) → absolute disk path
             image_url: str = creative.get("image_url", "")
             disk_path = str(Path(backend_root) / image_url.lstrip("/"))
-
-            logger.info("STEP 3: Uploading image %s...", disk_path)
-            image_hash = await self.upload_image(disk_path)
-            logger.info("STEP 3 OK: image_hash %s", image_hash)
+            is_video = image_url.lower().endswith(".mp4")
 
             cta_text = (creative.get("cta") or "Book Now").upper().strip()
             cta_type = CTA_MAP.get(cta_text, "BOOK_NOW")
 
-            logger.info("STEP 4: Creating creative %d...", idx + 1)
-            creative_id = await self.create_creative(
-                name=f"{campaign_name} – Creative {idx + 1}",
-                page_id=page_id,
-                image_hash=image_hash,
-                headline=creative.get("headline") or campaign_name,
-                body=creative.get("body") or "",
-                cta_type=cta_type,
-                link_url=destination_url,
-                instagram_actor_id=instagram_actor_id,
-                display_url=display_url,
-                addon_type=addon_type,
-                addon_phone=addon_phone,
-            )
+            if is_video:
+                logger.info("STEP 3: Uploading video %s...", disk_path)
+                video_id = await self.upload_video(disk_path)
+                logger.info("STEP 3 OK: video_id %s", video_id)
+
+                logger.info("STEP 4: Creating video creative %d...", idx + 1)
+                creative_id = await self.create_video_creative(
+                    name=f"{campaign_name} – Creative {idx + 1}",
+                    page_id=page_id,
+                    video_id=video_id,
+                    headline=creative.get("headline") or campaign_name,
+                    body=creative.get("body") or "",
+                    cta_type=cta_type,
+                    link_url=destination_url,
+                    instagram_actor_id=instagram_actor_id,
+                    addon_type=addon_type,
+                    addon_phone=addon_phone,
+                )
+            else:
+                logger.info("STEP 3: Uploading image %s...", disk_path)
+                image_hash = await self.upload_image(disk_path)
+                logger.info("STEP 3 OK: image_hash %s", image_hash)
+
+                logger.info("STEP 4: Creating creative %d...", idx + 1)
+                creative_id = await self.create_creative(
+                    name=f"{campaign_name} – Creative {idx + 1}",
+                    page_id=page_id,
+                    image_hash=image_hash,
+                    headline=creative.get("headline") or campaign_name,
+                    body=creative.get("body") or "",
+                    cta_type=cta_type,
+                    link_url=destination_url,
+                    instagram_actor_id=instagram_actor_id,
+                    display_url=display_url,
+                    addon_type=addon_type,
+                    addon_phone=addon_phone,
+                )
 
             logger.info("STEP 4 OK: creative %s", creative_id)
 

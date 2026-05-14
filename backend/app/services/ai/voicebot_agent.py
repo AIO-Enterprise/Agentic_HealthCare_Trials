@@ -126,6 +126,38 @@ def _normalise_phone(phone: str) -> str:
     return re.sub(r"[\s\-().]+", "", phone)
 
 
+# Sentences in the marketing exec_summary that contain ad-strategy noise the
+# voice agent must never see (budget figures, CAC, ad creative directions,
+# enrolment targets, etc.).  Lower-cased substring matches.
+_EXEC_SUMMARY_BLOCKLIST = (
+    "budget", "$", "aud", "cac", "media spend",
+    "test phase", "daily budget",
+    "ad concept", "ad concepts", "creative", "cursive", "font",
+    "meta ads", "facebook", "instagram",
+    "recruit", "enrolment", "enrollment", "target enrolment",
+    "ecosystem", "promoted through",
+)
+
+
+def _sanitize_exec_summary_for_voice(summary: str) -> str:
+    """Drop sentences that contain campaign-strategy / budget / ad-creative
+    info the voice agent must never read.  Keep only patient-facing study
+    description sentences."""
+    import re
+    if not summary:
+        return ""
+    sentences = re.split(r"(?<=[.!?])\s+", summary)
+    keep: list[str] = []
+    for s in sentences:
+        low = s.lower()
+        if any(b in low for b in _EXEC_SUMMARY_BLOCKLIST):
+            continue
+        keep.append(s.strip())
+    # If everything got filtered, return empty — protocol document is the
+    # authoritative source for what the trial actually is.
+    return " ".join(keep).strip()
+
+
 class VoicebotAgentService:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -926,7 +958,7 @@ Respond with ONLY a valid JSON object, no markdown:
                 "agent": {
                     "prompt": {
                         "prompt": system_prompt,
-                        "llm": "claude-3-7-sonnet",
+                        "llm": "claude-3-5-sonnet",
                         "temperature": 0.7,
                         "tools": tools,
                     },
@@ -1002,13 +1034,31 @@ Respond with ONLY a valid JSON object, no markdown:
             if publisher_voice_id
             else _voice_for_style(bot_config.get("conversation_style", "warm"))
         )
-        bot_name   = bot_config.get("bot_name") or bot_config.get("name") or _voice_profile["name"]
+        # Bot name resolution: ignore the generic "Assistant" placeholder so the
+        # voice persona's actual name is used in the introduction.
+        _raw_bot_name = (bot_config.get("bot_name") or bot_config.get("name") or "").strip()
+        if _raw_bot_name.lower() in ("", "assistant", "voice assistant", "bot"):
+            bot_name = _voice_profile["name"]
+        else:
+            bot_name = _raw_bot_name
         style      = bot_config.get("conversation_style", "professional and helpful")
         compliance = bot_config.get("compliance_notes", "")
         first_msg  = bot_config.get("first_message", "")
 
-        exec_summary = strategy.get("executive_summary", "")
+        # Industry phrase — omit if empty so we don't generate "in the  sector".
+        _industry_phrase = f" in the {industry} sector" if industry and industry.strip() else ""
+
+        # Executive summary often contains marketing/ad-strategy info (budget,
+        # CAC, ad concepts, target enrolment) that the AGENT should not be
+        # reading on a patient call.  We sanitise it down to just the
+        # patient-facing first sentence (or two) — the protocol document is
+        # the authoritative source for everything else.
+        _raw_exec = (strategy.get("executive_summary") or "").strip()
+        exec_summary = _sanitize_exec_summary_for_voice(_raw_exec)
         target_aud   = strategy.get("target_audience", {})
+        # Fall back to the top-level target_audience column if strategy_json has none
+        if not target_aud and ad.target_audience:
+            target_aud = ad.target_audience
         tone         = messaging.get("tone", "")
         core_message = messaging.get("core_message", "")
 
@@ -1032,20 +1082,90 @@ Respond with ONLY a valid JSON object, no markdown:
         questionnaire = ad.questionnaire or {}
         questions = questionnaire.get("questions", []) if isinstance(questionnaire, dict) else []
 
+        # Protocol documents — these are the single richest source of campaign
+        # context if the publisher uploaded a study protocol / IRB / patient-info
+        # PDF.  We pull their parsed text (highest-priority first) and budget
+        # the prompt so the model gets real detail without blowing context.
+        from app.models.document import AdvertisementDocument
+        docs_result = await self.db.execute(
+            select(AdvertisementDocument)
+            .where(AdvertisementDocument.advertisement_id == ad.id)
+            .order_by(AdvertisementDocument.priority.desc(), AdvertisementDocument.created_at.desc())
+        )
+        protocol_docs = docs_result.scalars().all()
+        # Budget ~12 000 chars total across docs — well within Claude's window
+        # but enough to fit a full protocol summary plus FAQs.
+        _DOC_TOTAL_BUDGET = 12_000
+        _PER_DOC_BUDGET   = 5_000
+        doc_excerpts: list[str] = []
+        used = 0
+        for d in protocol_docs:
+            if used >= _DOC_TOTAL_BUDGET:
+                break
+            content = (d.content or "").strip()
+            if not content:
+                continue
+            remaining = _DOC_TOTAL_BUDGET - used
+            take = min(_PER_DOC_BUDGET, remaining)
+            excerpt = content[:take]
+            doc_excerpts.append(f"### {d.title} ({d.doc_type})\n{excerpt}")
+            used += len(excerpt)
+
         # ── Base identity (skill.md overrides the default identity block only) ─
+        _has_rich_data = bool(exec_summary or must_have or faqs or questions or doc_excerpts)
         if skill and skill.skill_md:
             identity_block = skill.skill_md
-        else:
+        elif _has_rich_data:
             identity_block = (
-                f"You are {bot_name}, a voice assistant representing {company_name} "
-                f"in the {industry} sector. "
+                f"You are {bot_name}, a voice assistant representing {company_name}"
+                f"{_industry_phrase}. "
                 f"You are calling because the person expressed interest in the \"{ad.title}\" campaign. "
                 "Your goal is to answer their questions, walk them through the eligibility screening, "
                 "and if they qualify, encourage them to take the next step."
             )
+        else:
+            # Minimal-data fallback — give the agent concrete direction so it doesn't
+            # hallucinate or go silent when the campaign hasn't been fully configured.
+            identity_block = (
+                f"You are {bot_name}, a voice assistant representing {company_name}"
+                f"{_industry_phrase}. "
+                f"You are calling because the person expressed interest in the \"{ad.title}\" "
+                f"{'campaign focused on ' + ad.campaign_category if ad.campaign_category else 'campaign'}. "
+                "Your goal is to:\n"
+                "  1. Warmly introduce yourself and confirm the person's interest.\n"
+                "  2. Briefly describe the study based on any Trial Facts you have been given.\n"
+                "  3. Ask a few natural questions to understand their situation and rough eligibility.\n"
+                "  4. If they seem interested and eligible, let them know the research team will follow up shortly.\n"
+                "  5. If you don't know a specific detail (procedures, exact criteria, dates), say honestly: "
+                "'That's a great question — I'll make sure the research team reaches out to you with that detail.' "
+                "Do NOT invent trial details, medical claims, or eligibility rules you were not given."
+            )
 
         # ── Build the prompt sections ─────────────────────────────────────────
         sections: list[str] = [identity_block]
+
+        # 0. Response shape (anchored early — Claude weights early instructions strongly)
+        sections.append(
+            "## How to Respond — Most Important Rule\n"
+            "You are NOT a chatbot that gives one-liners. You're a warm, knowledgeable phone "
+            "assistant who answers questions with real substance.\n"
+            "\n"
+            "Match response length to what the caller asked:\n"
+            "  • Pure acknowledgement (\"okay\", \"yes\", \"got it\") → 1 short sentence.\n"
+            "  • Emotional reaction (empathy, encouragement) → 1–2 sentences.\n"
+            "  • REAL question (what is this study, am I eligible, what happens, what's involved, "
+            "how long, what's the medication, who's running it, is it safe, will I get paid) → "
+            "**4–7 sentences of specific, useful information** pulled from the Trial Facts, "
+            "Eligibility, and FAQ sections below.\n"
+            "  • Story / context the caller shares → reflect back with 2–3 sentences before moving on.\n"
+            "\n"
+            "If you have the answer in the prompt below, GIVE IT. Don't say \"the team will tell you\" "
+            "when the trial duration, location, criteria, or FAQs are right there. Vague brush-offs "
+            "make the caller hang up.\n"
+            "\n"
+            "Hard floor: every response answering a real question must be at least 3 sentences.\n"
+            "Hard ceiling: never more than 8 sentences in a single turn — let the caller respond."
+        )
 
         # 1. Trial facts
         facts_lines = [f"- Trial name: {ad.title}"]
@@ -1061,7 +1181,38 @@ Respond with ONLY a valid JSON object, no markdown:
             facts_lines.append(f"- Enrolment closes: {end_date}")
         if duration:
             facts_lines.append(f"- Trial duration: {duration}")
+        # NOTE: do NOT inject `patients_required` here.  The agent is forbidden
+        # by Campaign Privacy Rules from sharing participant numbers — having
+        # the number visible alongside that prohibition creates a contradiction
+        # that paralyses the model.  The protocol document carries the real
+        # target enrolment for internal context.
+        if ad.special_instructions:
+            facts_lines.append(f"- Special instructions: {ad.special_instructions}")
         sections.append("## Trial Facts\n" + "\n".join(facts_lines))
+
+        # 1b. Protocol documents — full source-of-truth content for the trial.
+        # The agent should treat this as authoritative when answering questions
+        # about procedures, eligibility, timelines, safety, or compensation.
+        if doc_excerpts:
+            sections.append(
+                "## Protocol Documents — YOUR SOURCE OF TRUTH FOR THIS STUDY\n"
+                "These are excerpts from the ACTUAL study documents. They are the authoritative "
+                "source for everything about this trial — what it involves, who runs it, who's "
+                "eligible, what visits are required, how long it lasts, and what participants receive.\n"
+                "\n"
+                "When the caller asks ANYTHING about the study, your job is to find the answer "
+                "in these documents and **summarise it naturally in 3–6 conversational sentences**. "
+                "Do not paraphrase into vague platitudes. Do not say \"the team will tell you\" if "
+                "the answer is right here. Pull the actual numbers, criteria, and procedures from "
+                "this content and explain them clearly.\n"
+                "\n"
+                "If the protocol names a different sponsor or study-coordinator organisation than "
+                f"\"{company_name}\", that's normal — you are calling on behalf of {company_name} "
+                "who is helping recruit for the study described below. You can refer to the study "
+                "by its short name (e.g. \"the RESTWELL study\") without dwelling on org structure.\n"
+                "\n"
+                + "\n\n".join(doc_excerpts)
+            )
 
         # 2. Audience & messaging — guidance only, never recite
         guidance_lines = []
@@ -1132,6 +1283,25 @@ Respond with ONLY a valid JSON object, no markdown:
                 else:
                     faq_lines.append(str(faq))
             sections.append("## Approved FAQs\n" + "\n\n".join(faq_lines))
+
+        # 5b. Fallback conversation guide — only injected when key data is absent
+        if not _has_rich_data:
+            sections.append(
+                "## Conversation Guide (follow when specific trial data is not available above)\n"
+                "Since detailed eligibility criteria and FAQs have not been configured yet, "
+                "guide the conversation naturally:\n"
+                "  1. Confirm the caller's name and that they expressed interest in this study.\n"
+                "  2. Give a brief, honest description of the study category and what participation generally involves "
+                "(e.g. attending appointments, answering questions, taking a study medication).\n"
+                "  3. Ask open questions to gauge interest and rough suitability:\n"
+                "     - 'Can you tell me a bit about your situation with [condition]?'\n"
+                "     - 'Have you participated in a clinical study before?'\n"
+                "     - 'Is there anything you'd like to know before deciding whether to proceed?'\n"
+                "  4. Reassure them: 'Participation is completely voluntary and you can withdraw at any time.'\n"
+                "  5. Close by telling them the research team will be in touch soon to walk them through the details.\n"
+                "  Do NOT make up specific inclusion/exclusion criteria, dosing schedules, compensation amounts, "
+                "or study timelines that were not provided to you."
+            )
 
         # 6. Guardrails — permanent rules first, then publisher eth_flags
         # Permanent rules are hardcoded and cannot be removed by campaign configuration.
@@ -1241,7 +1411,13 @@ Respond with ONLY a valid JSON object, no markdown:
             "## Voice & Delivery Rules\n"
             "You are speaking live on a phone call — not typing. Every word you say will be spoken aloud.\n"
             f"{accent_note}\n"
-            "- Keep turns short and conversational. 2–3 sentences max. Let the caller breathe.\n"
+            "- Match the depth of the caller's question. Quick acknowledgements get 1–2 sentences; "
+            "real questions (eligibility, what the study involves, what happens next) deserve 3–6 "
+            "sentences of substantive, specific information. Never sound like a brush-off.\n"
+            "- Use the Trial Facts, Eligibility, and FAQ sections actively — quote relevant detail when it answers "
+            "the question. Don't give vague non-answers when the prompt contains the real answer.\n"
+            "- Vary your sentence rhythm: pair a short reaction with a longer explanation. "
+            "Avoid long monologues (>8 sentences) — let the caller engage.\n"
             "- No bullet points, lists, markdown, headers, or punctuation names.\n"
             "- Contractions always: 'you're', 'it's', 'we've', 'that's'. Never the formal equivalents.\n"
             "- Never fabricate trial data, dates, or medical claims.\n"
@@ -1333,28 +1509,48 @@ Respond with ONLY a valid JSON object, no markdown:
                 "\n"
                 "━━ EXAMPLE RESPONSES — model your delivery on these exactly ━━\n"
                 "\n"
-                "Opening:\n"
+                "Opening (short — first impression):\n"
                 "\"Hi. This is {bot_name} from {company_name}. "
                 "Thanks a lot for expressing interest in our study. How are you doing today?\"\n"
                 "\n"
-                "Describing the study:\n"
-                "\"So... this trial is focused on, uh, a treatment that's actually been getting quite a bit of "
-                "attention lately. You've probably seen a thing or two about it in the media. "
-                "Basically, it's designed to help with — right — managing blood sugar and weight.\"\n"
+                "Substantive question — give the real answer with detail:\n"
+                "Q: \"What exactly does the study involve?\"\n"
+                "A: \"Yeah, great question. So... basically, it's a clinical trial looking at a new treatment "
+                "for managing blood sugar and weight, right. If you take part, you'd come in for an initial "
+                "screening visit — that's where the team walks you through everything, runs a few basic "
+                "health checks, and answers any questions you've got. After that, there are follow-up "
+                "visits roughly every four weeks, and each one is pretty short — about an hour. "
+                "The full study runs for around six months, but you're completely free to step away at any "
+                "point, no questions asked. Does that give you a clearer picture?\"\n"
                 "\n"
-                "Empathy moment:\n"
+                "Eligibility question — pull from the criteria, be specific:\n"
+                "Q: \"Am I eligible to take part?\"\n"
+                "A: \"So, the main things we're looking for are — uh — adults between 35 and 65, with a "
+                "diagnosis of type 2 diabetes that's been stable for at least the last six months. "
+                "You'd also need to not be on insulin currently, and have no major heart issues in the past "
+                "year. I'll actually walk you through a few quick questions in a moment to check that more "
+                "properly, but does that sound like it might fit your situation?\"\n"
+                "\n"
+                "Empathy moment (short — emotional acknowledgement):\n"
                 "\"Mmm, yeah... those 3am wake-ups are genuinely exhausting, I imagine. "
                 "That's actually exactly who this study is designed to help, so — you know — "
                 "you're in the right place.\"\n"
                 "\n"
-                "Warm reaction to good news:\n"
-                "\"Oh, that's brilliant! Based on everything you've told me, you sound like a really "
-                "wonderful fit. The team will be in touch very soon — no worries at all.\"\n"
+                "Warm reaction to good news (medium):\n"
+                "\"Oh, that's brilliant! Look, based on everything you've told me, you sound like a really "
+                "wonderful fit for this study. What I'll do now is — uh — get a screening appointment booked "
+                "for you, and the research team will take it from there. They'll go through everything in "
+                "more detail and answer any questions you've still got. No worries at all.\"\n"
                 "\n"
-                "Ineligibility — empathetic:\n"
-                "\"Thank you so much for your time, genuinely. Unfortunately, "
-                "um, this particular study isn't quite the right match — but look, there may be other trials "
-                "that suit you better, and the team can help point you in the right direction.\"\n"
+                "Quick acknowledgement (short — pure confirmation):\n"
+                "\"Yeah, no problem at all. Sounds good.\"\n"
+                "\n"
+                "Ineligibility — empathetic, explain why warmly:\n"
+                "\"Thank you so much for your time, genuinely. Unfortunately, um, this particular study "
+                "isn't quite the right match this time around — it's mainly because of the criteria the "
+                "researchers have set, not anything to do with you personally. But look, there may well be "
+                "other trials that suit you better, and the team can help point you in the right direction "
+                "if you'd like that.\"\n"
             ).format(bot_name=bot_name, company_name=company_name)
 
         sections.append(base_voice_rules + audio_rules)

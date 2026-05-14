@@ -709,6 +709,9 @@ export const adsAPI = {
   getVoiceAgentStatus: (adId) =>
     request(`/advertisements/${adId}/voice-agent/status`),
 
+  getVoiceAgentDebug: (adId) =>
+    request(`/advertisements/${adId}/voice/debug`),
+
   deleteVoiceAgent: (adId) =>
     request(`/advertisements/${adId}/voice-agent`, { method: "DELETE" }),
 

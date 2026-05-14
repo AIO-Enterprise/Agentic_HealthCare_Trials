@@ -130,7 +130,9 @@ function LiveVoiceWidget({ adId, isProvisioned }) {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error("Microphone not available — this feature requires HTTPS or localhost.");
       }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
       streamRef.current = stream;
 
       const { signed_url } = await adsAPI.getVoiceSessionToken(adId);
@@ -292,7 +294,7 @@ export default function VoicebotPanel({ ad, adId, isPublisher, isStudyCoordinato
   const cfg     = ad.bot_config || {};
 
   const [voiceId,    setVoiceId]    = useState(cfg.voice_id            || "XrExE9yKIg1WjnnlVkGX");
-  const [firstMsg,   setFirstMsg]   = useState(cfg.first_message       || "[takes a breath] Hi, this is Matilda with [Organization]. [short pause] We're enrolling volunteers for a clinical trial focused on [condition]. [short pause] Participation is voluntary, and, um, I can explain what's involved if you're interested.");
+  const [firstMsg,   setFirstMsg]   = useState(cfg.first_message       || "Hi. This is Matilda from our organization. Thanks a lot for expressing interest in our study. How are you doing today?");
   const [language,   setLanguage]   = useState(cfg.language            || "en");
   const [botName,    setBotName]    = useState(cfg.bot_name            || "");
   const [convStyle,  setConvStyle]  = useState(cfg.conversation_style  || "professional");

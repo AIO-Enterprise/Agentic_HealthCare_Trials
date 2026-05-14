@@ -8,12 +8,30 @@ import {
   Upload, Play, Pause, StopCircle, Users,
 } from "lucide-react";
 
+// Small visual indicator for "is this data source reaching the agent?"
+function DataFlag({ label, on }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+      <span style={{
+        display: "inline-block", width: 8, height: 8, borderRadius: "50%",
+        background: on ? "#10b981" : "#9ca3af", flexShrink: 0,
+      }} />
+      <span style={{ color: on ? "var(--color-text)" : "var(--color-muted)" }}>
+        {on ? "✓" : "✗"} {label}
+      </span>
+    </div>
+  );
+}
+
 export default function VoicebotConfig({ ad }) {
   const existing = ad.bot_config || {};
   const { companyName } = useAuth();
 
   const [form, setForm] = useState({
-    bot_name:      existing.bot_name      || "Assistant",
+    // bot_name defaults to the selected voice's persona (set once voices load
+    // below) — never "Assistant", which makes the agent introduce itself as
+    // "Hi, this is Assistant from …" on the call.
+    bot_name:      existing.bot_name      || "",
     voice_id:      existing.voice_id      || "XrExE9yKIg1WjnnlVkGX",
     first_message: existing.first_message || "",   // seeded after voices load so voice name resolves
     // conversation_style, language, compliance_notes are set by AI recommendation — not exposed to the user
@@ -33,11 +51,15 @@ export default function VoicebotConfig({ ad }) {
   const selectedVoiceName = voices.find((v) => v.voice_id === form.voice_id)?.name || form.bot_name || "Assistant";
   const defaultFirstMessage = `Hi. This is ${selectedVoiceName} from ${companyName || "your organization"}. Thanks a lot for expressing interest in our study. How are you doing today?`;
 
-  // Seed first_message once voices have loaded (so voice name resolves correctly)
+  // Seed bot_name + first_message once voices have loaded so they resolve
+  // against the actual selected voice persona.
   useEffect(() => {
-    if (!voicesLoading && !form.first_message) {
-      setForm((p) => ({ ...p, first_message: defaultFirstMessage }));
-    }
+    if (voicesLoading) return;
+    setForm((p) => ({
+      ...p,
+      bot_name:      p.bot_name      || selectedVoiceName,
+      first_message: p.first_message || defaultFirstMessage,
+    }));
   }, [voicesLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [saving,         setSaving]         = useState(false);
@@ -49,6 +71,21 @@ export default function VoicebotConfig({ ad }) {
   const [transcript,     setTranscript]     = useState(null);
   const [recommending,   setRecommending]   = useState(false);
   const [recommendation, setRecommendation] = useState(null);
+
+  // ── Agent-context debug viewer ──────────────────────────────────────────────
+  const [debugInfo,    setDebugInfo]    = useState(null);
+  const [debugLoading, setDebugLoading] = useState(false);
+  const handleShowDebug = async () => {
+    setDebugLoading(true);
+    try {
+      const data = await adsAPI.getVoiceAgentDebug(ad.id);
+      setDebugInfo(data);
+    } catch (err) {
+      alert(err.message || "Failed to load agent debug info.");
+    } finally {
+      setDebugLoading(false);
+    }
+  };
 
   // ── Voice picker ────────────────────────────────────────────────────────────
   const [voiceDropdownOpen, setVoiceDropdownOpen] = useState(false);
@@ -165,7 +202,9 @@ export default function VoicebotConfig({ ad }) {
     cleanupCall();
   }, [cleanupCall]);
 
-  // Schedule a raw PCM ArrayBuffer for gapless playback via Web Audio
+  // Schedule a raw PCM ArrayBuffer for gapless playback via Web Audio.
+  // When the queue drains, ack the server with {type: "playback_done"} so it
+  // knows precisely when it's safe to listen again — no fixed-timer guess.
   const playRawPCM = useCallback((arrayBuffer) => {
     const ctx = ctxRef.current;
     if (!ctx) return;
@@ -189,6 +228,10 @@ export default function VoicebotConfig({ ad }) {
         if (!ctxRef.current || schedRef.current <= ctxRef.current.currentTime + 0.05) {
           isSpeakingRef.current = false;
           setIsSpeaking(false);
+          // Ack server: audio queue drained, mic capture is now real (not echo).
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            try { wsRef.current.send(JSON.stringify({ type: "playback_done" })); } catch {}
+          }
         }
       };
     } catch {}
@@ -202,7 +245,9 @@ export default function VoicebotConfig({ ad }) {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error("Microphone not available — this page must be served over HTTPS or localhost.");
       }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
       streamRef.current = stream;
 
       const token = localStorage.getItem("token") || "";
@@ -229,7 +274,9 @@ export default function VoicebotConfig({ ad }) {
         muted.connect(ctx.destination);
         processor.onaudioprocess = (e) => {
           if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-          if (isSpeakingRef.current) return; // mic gate — don't echo during agent speech
+          // Always send mic — the browser's echoCancellation suppresses self-echo,
+          // and the server runs its own VAD that distinguishes real speech from
+          // residual echo.  Gating here would block barge-in entirely.
           const f32 = e.inputBuffer.getChannelData(0);
           const i16 = new Int16Array(f32.length);
           for (let i = 0; i < f32.length; i++) i16[i] = Math.round(Math.max(-1, Math.min(1, f32[i])) * 32767);
@@ -248,6 +295,11 @@ export default function VoicebotConfig({ ad }) {
             setLiveTranscript(prev => [...prev, { role: msg.role, text: msg.text }]);
           } else if (msg.type === "agent_end" && msg.text) {
             setLiveTranscript(prev => [...prev, { role: "assistant", text: msg.text }]);
+          } else if (msg.type === "interruption") {
+            stopAllSources();
+            schedRef.current = ctxRef.current?.currentTime ?? 0;
+            isSpeakingRef.current = false;
+            setIsSpeaking(false);
           } else if (msg.type === "error") {
             setCallError(msg.detail || "An error occurred.");
           }
@@ -687,7 +739,67 @@ export default function VoicebotConfig({ ad }) {
             </button>
           </>
         )}
+
       </div>
+
+      {/* Agent context debug modal */}
+      {debugInfo && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setDebugInfo(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: "var(--color-surface)", borderRadius: 14, padding: 22, maxWidth: 800, width: "94%", maxHeight: "85vh", overflowY: "auto" }}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <p style={{ fontWeight: 700, fontSize: "0.95rem" }}>Agent Context — what the voice bot knows</p>
+              <button onClick={() => setDebugInfo(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-muted)" }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Campaign data presence summary */}
+            <div style={{ background: "var(--color-bg)", borderRadius: 8, padding: "10px 12px", marginBottom: 12, fontSize: "0.78rem", lineHeight: 1.6 }}>
+              <div><strong>Title:</strong> {debugInfo.title || "—"}</div>
+              <div><strong>Category:</strong> {debugInfo.campaign_category || "—"}</div>
+              <div><strong>Duration:</strong> {debugInfo.duration || "—"}</div>
+              <div><strong>Participants:</strong> {debugInfo.patients_required ?? "—"}</div>
+              <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid var(--color-border)" }}>
+                <strong style={{ display: "block", marginBottom: 4 }}>Data sources reaching the agent:</strong>
+                <DataFlag label="Strategy generated"    on={debugInfo.data_presence?.strategy_json} />
+                <DataFlag label="Website requirements"  on={debugInfo.data_presence?.website_reqs} />
+                <DataFlag label="Screening questionnaire" on={debugInfo.data_presence?.questionnaire} />
+                <DataFlag label="Target audience"       on={debugInfo.data_presence?.target_audience} />
+                <DataFlag
+                  label={`Protocol documents (${debugInfo.data_presence?.protocol_docs_with_content ?? 0} of ${debugInfo.data_presence?.protocol_docs_total ?? 0} with parsed content)`}
+                  on={Boolean(debugInfo.data_presence?.protocol_docs_with_content)}
+                />
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 10, fontSize: "0.74rem", color: "var(--color-muted)" }}>
+              <strong>Prompt:</strong> {debugInfo.prompt_length} chars · {debugInfo.prompt_sections?.length || 0} sections
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <p style={{ fontSize: "0.74rem", fontWeight: 700, marginBottom: 4 }}>Sections in the prompt:</p>
+              <ul style={{ fontSize: "0.74rem", paddingLeft: 18, margin: 0 }}>
+                {(debugInfo.prompt_sections || []).map((s, i) => <li key={i}>{s.replace(/^## /, "")}</li>)}
+              </ul>
+            </div>
+
+            <details>
+              <summary style={{ cursor: "pointer", fontSize: "0.78rem", fontWeight: 700, padding: "4px 0" }}>
+                Full system prompt (click to expand)
+              </summary>
+              <pre style={{ background: "var(--color-bg)", padding: 12, borderRadius: 8, fontSize: "0.72rem", whiteSpace: "pre-wrap", maxHeight: 400, overflowY: "auto", marginTop: 8 }}>
+                {debugInfo.system_prompt}
+              </pre>
+            </details>
+          </div>
+        </div>
+      )}
 
       {/* Provision error */}
       {statusError && (

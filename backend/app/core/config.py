@@ -35,18 +35,18 @@ class Settings(BaseSettings):
 
     # Anthropic (direct API)
     ANTHROPIC_API_KEY: Optional[str] = None
-    ANTHROPIC_MODEL: str = "claude-sonnet-4-20250514"
-    # Opus 4.6 — used exclusively for ad strategy generation (curator)
-    ANTHROPIC_CURATOR_MODEL: str = "claude-opus-4-6"
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-5-20250514"
+    # Opus 4.5 — used exclusively for ad strategy generation (curator)
+    ANTHROPIC_CURATOR_MODEL: str = "claude-opus-4-5"
 
     # AWS Bedrock
     USE_BEDROCK: bool = False
     AWS_ACCESS_KEY_ID: Optional[str] = None
     AWS_SECRET_ACCESS_KEY: Optional[str] = None
     AWS_REGION: str = "us-east-1"
-    BEDROCK_MODEL: str = "us.anthropic.claude-sonnet-4-6"
-    # Opus 4.6 Bedrock ID — used exclusively for ad strategy generation (curator)
-    BEDROCK_CURATOR_MODEL: str = "us.anthropic.claude-opus-4-6-v1"
+    BEDROCK_MODEL: str = "us.anthropic.claude-sonnet-4-5-20250514-v1:0"
+    # Opus 4.5 Bedrock ID — used exclusively for ad strategy generation (curator)
+    BEDROCK_CURATOR_MODEL: str = "us.anthropic.claude-opus-4-5-20250514-v1:0"
 
     # Chat widget model (Haiku — lightweight, fast, stays within Bedrock)
     CHAT_MODEL: str = "us.anthropic.claude-haiku-3-5-20241022"

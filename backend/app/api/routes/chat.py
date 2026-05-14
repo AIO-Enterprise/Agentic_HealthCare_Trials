@@ -641,7 +641,8 @@ async def chat(
 
         except Exception as exc:
             logger.error("Chat Azure/OpenAI error for campaign %s: %s", campaign_id, exc)
-            raise HTTPException(status_code=502, detail="AI service temporarily unavailable")
+            reply = "I'm sorry, I'm having a little trouble right now. Could you try again?"
+            # Fall through — reply will be saved to history below so context is preserved.
 
     elif is_configured():
         try:
@@ -680,7 +681,7 @@ async def chat(
 
         except Exception as exc:
             logger.error("Chat LLM error for campaign %s: %s", campaign_id, exc)
-            raise HTTPException(status_code=502, detail="AI service temporarily unavailable")
+            reply = "I'm sorry, I'm having a little trouble right now. Could you try again?"
     else:
         global _mock_idx
         reply = _MOCK_REPLIES[_mock_idx % len(_MOCK_REPLIES)]

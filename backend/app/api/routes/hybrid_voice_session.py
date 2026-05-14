@@ -7,24 +7,25 @@ TTS strategy (single-model per utterance — no ensemble):
   • Responses→ eleven_v3_conversational (EL streaming WS, first chunk ~200 ms
                                          after first LLM token — snappy gap)
 
-Why no ensemble: TTS models generate prosody from their full input text.
-Splitting a response across two separate synthesis calls produces an audible
-acoustic seam — the first model synthesises a speech-FINAL ending, the second
-starts with speech-INITIAL energy. Single-model synthesis gives naturally
-consistent prosody throughout.
-
-Streaming pipeline (per turn):
-  1. VAD triggers → Flash filler fires (~75 ms) + ASR starts in parallel.
-  2. Filler audio streams to browser; ASR transcribes (~400 ms).
-  3. Claude streaming API starts; tokens flow to ElevenLabs streaming WS.
-  4. ElevenLabs emits audio chunks ~200 ms after first tokens arrive.
-  5. Audio chunks forwarded to browser as they arrive.
-  Gap = filler_end (~975 ms) – first_v3_chunk (~900 ms) ≈ 0 ms overlap.
+Architecture (this rewrite):
+  • A background `mic_task` ALWAYS reads PCM from the browser and runs VAD,
+    even while the agent is speaking.  That makes true barge-in possible.
+  • Completed user-speech segments are pushed onto an asyncio.Queue.
+  • The main loop pops segments and launches a cancellable `_agent_turn` task.
+  • If the mic_task detects sustained user speech *while the agent is speaking*,
+    it sets `interrupt_event`.  The current agent_turn checks this between
+    chunks and aborts; a `{"type":"interruption"}` is sent to the browser so it
+    clears its audio queue.
+  • The browser sends `{"type":"playback_done"}` whenever its scheduled audio
+    has drained.  The server uses this (with a fallback timeout) to release the
+    `agent_speaking` flag — eliminating the dead-air guess of a fixed timer.
 
 Wire protocol
 ─────────────
 Browser → Backend  (binary):      Raw PCM 16 000 Hz 16-bit LE mono
-Browser → Backend  (text/JSON):   {"type": "interrupt"}
+Browser → Backend  (text/JSON):
+    {"type": "interrupt"}                — user explicitly stopped agent
+    {"type": "playback_done"}            — browser audio queue drained
 
 Backend → Browser  (binary):      Raw PCM 16 000 Hz 16-bit LE mono
 Backend → Browser  (text/JSON):
@@ -32,6 +33,7 @@ Backend → Browser  (text/JSON):
     {"type": "transcript",    "role": "user",  "text": "..."}
     {"type": "agent_start"}
     {"type": "agent_end",     "text": "..."}
+    {"type": "interruption"}             — browser must stop playback now
     {"type": "error",         "detail": "..."}
 
 Authentication: pass JWT as ?token=<jwt> query param.
@@ -40,31 +42,29 @@ Authentication: pass JWT as ?token=<jwt> query param.
 from __future__ import annotations
 
 import asyncio
-import base64
 import io
 import json
 import logging
 import math
 import random
+import re
 import struct
 from typing import Optional
 
 import httpx
-import websockets as _ws_lib
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.bedrock import get_async_client, get_model
 from app.core.config import settings
-from app.core.security import decode_token
+from app.core.security import decode_token, get_current_user
 from app.db.database import get_db
 from app.models.models import (
     Advertisement,
     CallTranscript,
     Company,
-    SkillConfig,
-    SurveyResponse,
+    User,
     VoiceSession,
 )
 from app.services.ai.voicebot_agent import AUSTRALIAN_VOICES, _voice_for_style
@@ -76,14 +76,22 @@ router = APIRouter()
 
 ELEVENLABS_ASR_URL   = "https://api.elevenlabs.io/v1/speech-to-text"
 _ELEVENLABS_TTS_URL  = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
-_EL_STREAM_WS_URL    = (
-    "wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input"
-    "?model_id={model_id}&output_format=pcm_16000&xi_api_key={api_key}"
-)
 
-FLASH_MODEL      = settings.ELEVENLABS_FLASH_MODEL        # eleven_flash_v2
-EXPRESSIVE_MODEL = settings.ELEVENLABS_EXPRESSIVE_MODEL   # eleven_v3_conversational
-SAMPLE_RATE      = 16_000
+FLASH_MODEL = settings.ELEVENLABS_FLASH_MODEL   # eleven_flash_v2
+SAMPLE_RATE = 16_000
+
+# Keep at most this many turns of history sent to Claude (plus initial seed).
+# Long calls would otherwise inflate latency and let the model drift.
+_HISTORY_MAX_TURNS = 14
+
+# Minimum continuous voiced audio required to count as a barge-in attempt.
+# Tuned conservative so echo bleed / background noise can't truncate the
+# agent mid-sentence.  Real user speech easily lasts >800 ms.
+_BARGE_IN_MIN_MS = 900
+
+# Maximum time to wait for the browser to ack playback completion before
+# falling back to a timer (in case the browser never sends the ack).
+_PLAYBACK_DONE_TIMEOUT_S = 8.0
 
 _VOICE_SETTINGS = {
     "stability": 0.55,
@@ -102,6 +110,9 @@ _THINKING_FILLERS = [
     "Of course.",
     "Absolutely.",
 ]
+
+# Strip XML-style and square-bracket audio tags so Flash v2 doesn't speak them literally.
+_XML_TAG_RE = re.compile(r"<[^>]{1,40}>|\[[^\]]{1,30}\]")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -144,22 +155,6 @@ async def _transcribe(pcm_bytes: bytes) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LLM
-# ─────────────────────────────────────────────────────────────────────────────
-
-async def _generate_response(system_prompt: str, history: list[dict]) -> str:
-    client = get_async_client()
-    model = get_model()
-    response = await client.messages.create(
-        model=model,
-        max_tokens=512,
-        system=system_prompt,
-        messages=history,
-    )
-    return response.content[0].text if response.content else ""
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # TTS helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -175,13 +170,13 @@ async def _stream_tts_to_ws(
     model_id: str,
     websocket: WebSocket,
     chunk_size: int = 4096,
+    interrupt_event: Optional[asyncio.Event] = None,
 ) -> None:
     """
     Stream ElevenLabs TTS PCM chunks directly to the browser as they arrive.
 
-    The browser's AudioContext schedules each arriving chunk immediately after
-    the previous one via schedRef — there is no gap within a response because
-    all chunks come from a single synthesis call (consistent prosody throughout).
+    If *interrupt_event* is provided, stops forwarding chunks the moment it is
+    set — used by the barge-in path.
     """
     if not text.strip():
         return
@@ -205,76 +200,172 @@ async def _stream_tts_to_ws(
                     f"{body.decode(errors='replace')}"
                 )
             async for chunk in resp.aiter_bytes(chunk_size):
+                if interrupt_event is not None and interrupt_event.is_set():
+                    return
                 if chunk:
                     await websocket.send_bytes(chunk)
 
 
-async def _stream_llm_tts_pipeline(
-    system_prompt: str,
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Streaming hybrid LLM → TTS pipeline (disabled — kept for future use)
+# To re-enable: remove the `if False:` wrapper and restore the agent_turn call.
+# ─────────────────────────────────────────────────────────────────────────────
+
+if False:  # noqa: SIM210  # pragma: no cover
+ async def _stream_hybrid_response(
     history: list[dict],
+    system_prompt: str,
     voice_id: str,
     websocket: WebSocket,
-) -> str:
+    interrupt_event: asyncio.Event,
+) -> tuple[str, bool]:
     """
-    Pipeline: Claude streaming tokens → ElevenLabs streaming WS → browser.
+    Stream LLM tokens and synthesise in parallel using Flash + v3:
 
-    ElevenLabs starts emitting audio ~200 ms after the first tokens arrive,
-    so the first chunk reaches the browser before the filler finishes playing —
-    the gap between filler end and response start collapses to near zero.
+      1. Accumulate tokens until the first sentence boundary (8-18 words).
+      2. Fire off a Flash TTS task for that opener immediately — it arrives in
+         ~75 ms and begins playing while the rest of the LLM response streams.
+      3. Collect the remainder of the LLM response.
+      4. Fire off a v3 TTS task for the continuation while Flash is still
+         streaming to the browser.
+      5. Yield Flash audio, then v3 audio — seamless, no gap.
 
-    Returns the full agent text for appending to history.
+    Returns (full_agent_text, sent_any_audio).
     """
-    url = _EL_STREAM_WS_URL.format(
-        voice_id=voice_id,
-        model_id=EXPRESSIVE_MODEL,
-        api_key=settings.ELEVENLABS_API_KEY or "",
-    )
-    full_text = ""
+    client = get_async_client()
+    min_w = settings.FUSION_OPENER_MIN_WORDS   # 8
+    max_w = settings.FUSION_OPENER_MAX_WORDS   # 18
 
-    async with _ws_lib.connect(url) as el_ws:
-        # Initialise voice session with settings
-        await el_ws.send(json.dumps({"text": " ", "voice_settings": _VOICE_SETTINGS}))
+    full_text   = ""   # clean text (XML tags stripped) — goes to history
+    token_buf   = ""   # accumulation buffer pre-split
+    opener_text = ""
+    opener_task: Optional[asyncio.Task] = None
 
-        async def _pipe_audio() -> None:
-            """Forward ElevenLabs audio chunks to the browser as they arrive."""
+    # ── Phase 1: stream LLM, extract opener at first sentence boundary ─────────
+    try:
+        async with client.messages.stream(
+            model=get_model(),
+            max_tokens=1024,
+            system=system_prompt,
+            messages=_trim_history(history),
+        ) as stream:
+            async for delta in stream.text_stream:
+                if interrupt_event.is_set():
+                    break
+                clean = _XML_TAG_RE.sub("", delta)
+                token_buf += clean
+                full_text += clean
+
+                if opener_task is not None:
+                    continue  # opener already dispatched — just collect the rest
+
+                words = token_buf.split()
+                if len(words) < min_w:
+                    continue
+
+                # Search for a sentence boundary within the word window
+                for i in range(min_w - 1, min(max_w, len(words))):
+                    candidate = " ".join(words[: i + 1])
+                    if _SENTENCE_END_RE.search(candidate):
+                        opener_text = candidate.strip()
+                        # Slice consumed portion from buffer
+                        token_buf = token_buf[len(" ".join(words[: i + 1])):].lstrip()
+                        opener_task = asyncio.create_task(
+                            _fetch_tts_pcm(opener_text, voice_id, FLASH_MODEL),
+                            name="opener_flash",
+                        )
+                        break
+                else:
+                    # No sentence boundary yet — hard-split at max_w
+                    if len(words) > max_w:
+                        opener_text = " ".join(words[:max_w]).strip()
+                        token_buf = " ".join(words[max_w:])
+                        opener_task = asyncio.create_task(
+                            _fetch_tts_pcm(opener_text, voice_id, FLASH_MODEL),
+                            name="opener_flash",
+                        )
+    except Exception as exc:
+        logger.error("LLM streaming error: %s", exc)
+        if opener_task:
+            opener_task.cancel()
+        raise
+
+    if interrupt_event.is_set():
+        if opener_task:
+            opener_task.cancel()
+        return full_text.strip(), False
+
+    # ── Phase 2: dispatch v3 for the continuation while Flash is in-flight ─────
+    continuation = token_buf.strip()
+    v3_task: Optional[asyncio.Task] = None
+    if continuation and not interrupt_event.is_set():
+        v3_task = asyncio.create_task(
+            _fetch_tts_pcm(continuation, voice_id, EXPRESSIVE_MODEL),
+            name="cont_v3",
+        )
+
+    sent_audio = False
+
+    # ── Phase 3: stream Flash opener ──────────────────────────────────────────
+    if opener_task is None:
+        # Very short response — nothing was split; use Flash for the whole thing
+        if full_text.strip() and not interrupt_event.is_set():
             try:
-                while True:
-                    raw = await el_ws.recv()
-                    data = json.loads(raw)
-                    if data.get("audio"):
-                        await websocket.send_bytes(base64.b64decode(data["audio"]))
-                    if data.get("isFinal"):
-                        return
-            except Exception:
-                pass
+                await _stream_tts_to_ws(
+                    full_text.strip(), voice_id, FLASH_MODEL, websocket,
+                    interrupt_event=interrupt_event,
+                )
+                sent_audio = True
+            except Exception as exc:
+                logger.error("Flash TTS (short response) failed: %s", exc)
+        return full_text.strip(), sent_audio
 
-        audio_task = asyncio.create_task(_pipe_audio())
+    try:
+        opener_audio = normalize_pcm(await opener_task)
+        for i in range(0, len(opener_audio), 4096):
+            if interrupt_event.is_set():
+                break
+            await websocket.send_bytes(opener_audio[i : i + 4096])
+        sent_audio = True
+    except asyncio.CancelledError:
+        pass
+    except Exception as exc:
+        logger.warning("Opener Flash TTS failed: %s", exc)
 
-        client   = get_async_client()
-        model_id = get_model()
+    # ── Phase 4: stream v3 continuation ───────────────────────────────────────
+    if v3_task and not interrupt_event.is_set():
         try:
-            async with client.messages.stream(
-                model=model_id,
-                max_tokens=512,
-                system=system_prompt,
-                messages=history,
-            ) as stream:
-                async for chunk in stream.text_stream:
-                    full_text += chunk
-                    await el_ws.send(json.dumps({"text": chunk}))
+            v3_audio = normalize_pcm(await v3_task)
+            for i in range(0, len(v3_audio), 4096):
+                if interrupt_event.is_set():
+                    break
+                await websocket.send_bytes(v3_audio[i : i + 4096])
+            sent_audio = True
+        except asyncio.CancelledError:
+            pass
         except Exception as exc:
-            logger.error("LLM stream error: %s", exc)
-            audio_task.cancel()
-            return full_text
+            logger.warning("Continuation v3 TTS failed (opener already played): %s", exc)
+    elif v3_task:
+        v3_task.cancel()
 
-        # Signal ElevenLabs to flush and close
-        await el_ws.send(json.dumps({"text": " ", "flush": True}))
-        try:
-            await asyncio.wait_for(audio_task, timeout=30.0)
-        except asyncio.TimeoutError:
-            logger.warning("TTS pipeline audio drain timed out")
+    return full_text.strip(), sent_audio
 
-    return full_text
+
+# ─────────────────────────────────────────────────────────────────────────────
+# History windowing
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _trim_history(history: list[dict]) -> list[dict]:
+    """Keep the most recent turns; preserve user/assistant alternation."""
+    if len(history) <= _HISTORY_MAX_TURNS:
+        return history
+    trimmed = history[-_HISTORY_MAX_TURNS:]
+    # Anthropic requires the first message to be "user" — drop a leading
+    # assistant if windowing landed on one.
+    while trimmed and trimmed[0]["role"] != "user":
+        trimmed = trimmed[1:]
+    return trimmed
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -312,6 +403,64 @@ async def _finalise_session(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Debug endpoint — returns the exact system prompt the voice bot will use,
+# plus the campaign-data presence summary.  Use this to see in one place what
+# the agent does (and doesn't) know about the campaign.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/advertisements/{advertisement_id}/voice/debug")
+async def voice_debug(
+    advertisement_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    from app.services.ai.voicebot_agent import VoicebotAgentService
+    from app.models.document import AdvertisementDocument
+
+    ad_res = await db.execute(
+        select(Advertisement).where(Advertisement.id == advertisement_id)
+    )
+    ad = ad_res.scalar_one_or_none()
+    if not ad:
+        return {"error": "Advertisement not found"}
+    if ad.company_id != user.company_id:
+        return {"error": "Forbidden"}
+
+    docs_res = await db.execute(
+        select(AdvertisementDocument).where(
+            AdvertisementDocument.advertisement_id == advertisement_id
+        )
+    )
+    docs = docs_res.scalars().all()
+
+    svc = VoicebotAgentService(db)
+    prompt = await svc._build_system_prompt(ad, allow_audio_tags=True)
+    section_headers = [ln for ln in prompt.split("\n") if ln.startswith("## ")]
+
+    return {
+        "advertisement_id": ad.id,
+        "title":            ad.title,
+        "campaign_category": ad.campaign_category,
+        "duration":         ad.duration,
+        "trial_location":   ad.trial_location,
+        "patients_required": ad.patients_required,
+        "data_presence": {
+            "bot_config_keys":  list((ad.bot_config or {}).keys()),
+            "strategy_json":    bool(ad.strategy_json),
+            "website_reqs":     bool(ad.website_reqs),
+            "questionnaire":    bool(ad.questionnaire),
+            "target_audience":  bool(ad.target_audience),
+            "protocol_docs_total":         len(docs),
+            "protocol_docs_with_content":  sum(1 for d in docs if (d.content or "").strip()),
+            "protocol_docs_titles":        [d.title for d in docs],
+        },
+        "prompt_length":    len(prompt),
+        "prompt_sections":  section_headers,
+        "system_prompt":    prompt,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # WebSocket endpoint
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -323,15 +472,13 @@ async def hybrid_voice_ws(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Full-duplex voice session.
+    Full-duplex voice session with proper barge-in.
 
-    Per-turn flow:
-      1. VAD detects end of speech
-      2. Flash filler fires immediately (~75 ms) — patient hears the agent "thinking"
-      3. ASR transcribes the buffered audio (runs in parallel with filler)
-      4. Claude generates the full response
-      5. v3_conversational streams the response chunk-by-chunk to the browser
-         (single synthesis call → consistent prosody, no acoustic seams)
+    A background mic_task continuously runs VAD on incoming PCM, even during
+    agent speech.  Sustained energy during agent speech triggers an interrupt
+    that cancels the in-progress LLM/TTS stream and tells the browser to flush
+    its audio queue.  The browser ack's actual playback completion so the
+    server knows precisely when the human can speak again.
     """
     # ── Auth ──────────────────────────────────────────────────────────────────
     if not token:
@@ -359,7 +506,6 @@ async def hybrid_voice_ws(
 
     bot_config: dict = ad.bot_config or {}
 
-    # Voice selection
     publisher_voice_id = bot_config.get("voice_id")
     if publisher_voice_id:
         matched_profile = next(
@@ -387,13 +533,278 @@ async def hybrid_voice_ws(
     first_message = bot_config.get("first_message") or default_first_message
 
     from app.services.ai.voicebot_agent import VoicebotAgentService
+    from app.models.document import AdvertisementDocument
     svc = VoicebotAgentService(db)
     system_prompt = await svc._build_system_prompt(ad, allow_audio_tags=True)
 
-    # ── Session ───────────────────────────────────────────────────────────────
+    # Diagnostic: show exactly what campaign data is/isn't reaching the agent.
+    docs_count_res = await db.execute(
+        select(AdvertisementDocument).where(
+            AdvertisementDocument.advertisement_id == advertisement_id
+        )
+    )
+    docs_loaded = docs_count_res.scalars().all()
+    docs_with_content = sum(1 for d in docs_loaded if (d.content or "").strip())
+    strategy_present     = bool(ad.strategy_json)
+    website_reqs_present = bool(ad.website_reqs and isinstance(ad.website_reqs, dict)
+                                and (ad.website_reqs.get("must_have")
+                                     or ad.website_reqs.get("faqs")))
+    questions_present    = bool(ad.questionnaire and isinstance(ad.questionnaire, dict)
+                                and ad.questionnaire.get("questions"))
+    logger.info(
+        "Voice session campaign data — title=%r category=%r duration=%r "
+        "strategy=%s website_reqs=%s questionnaire=%s protocol_docs=%d/%d-with-content "
+        "→ system_prompt=%d chars",
+        ad.title, ad.campaign_category, ad.duration,
+        strategy_present, website_reqs_present, questions_present,
+        docs_with_content, len(docs_loaded),
+        len(system_prompt),
+    )
+    # Emit the section headers we built so you can see what's in the prompt.
+    section_headers = [
+        line for line in system_prompt.split("\n") if line.startswith("## ")
+    ]
+    logger.info("Voice session prompt sections: %s", section_headers)
+
     voice_session = await _create_voice_session(db, advertisement_id)
 
-    # ── Greet — Flash for fast first impression ───────────────────────────────
+    # ── Shared state ──────────────────────────────────────────────────────────
+    rms_threshold = float(settings.FUSION_VAD_RMS_THRESHOLD)
+    silence_samples_threshold = (settings.FUSION_VAD_SILENCE_MS * SAMPLE_RATE) // 1000
+    barge_in_samples_required = (_BARGE_IN_MIN_MS * SAMPLE_RATE) // 1000
+
+    user_speech_queue: asyncio.Queue[bytes] = asyncio.Queue()
+    interrupt_event   = asyncio.Event()
+    playback_done_event = asyncio.Event()
+    agent_speaking    = asyncio.Event()
+    closing           = asyncio.Event()
+
+    history: list[dict] = [
+        {"role": "user",      "content": "[call started]"},
+        {"role": "assistant", "content": first_message},
+    ]
+
+    # ── Mic reader / VAD task ─────────────────────────────────────────────────
+    async def mic_task() -> None:
+        speech_buffer = bytearray()
+        silence_samples = 0
+        speech_detected = False
+        voiced_samples_during_agent = 0  # for barge-in debounce
+
+        while not closing.is_set():
+            try:
+                message = await websocket.receive()
+            except WebSocketDisconnect:
+                logger.info("mic_task: client disconnected, closing session")
+                closing.set()
+                return
+            except RuntimeError as exc:
+                # Starlette raises RuntimeError once the socket is in a closed
+                # state — treat the same as disconnect.
+                logger.info("mic_task: socket closed (%s), closing session", exc)
+                closing.set()
+                return
+            except Exception as exc:
+                logger.exception("mic_task: unexpected error reading from websocket: %s", exc)
+                # Keep the task alive on unknown read errors — the main loop
+                # will see no new queue entries but the conversation isn't
+                # silently dead.
+                await asyncio.sleep(0.1)
+                continue
+
+            if message.get("type") == "websocket.disconnect":
+                logger.info("mic_task: websocket.disconnect message received")
+                closing.set()
+                return
+
+            # ── Control messages ──────────────────────────────────────────────
+            if message.get("type") == "websocket.receive" and "text" in message:
+                try:
+                    ctrl = json.loads(message["text"])
+                except json.JSONDecodeError:
+                    continue
+                ctype = ctrl.get("type")
+                if ctype == "interrupt":
+                    interrupt_event.set()
+                    speech_buffer.clear()
+                    silence_samples = 0
+                    speech_detected = False
+                    voiced_samples_during_agent = 0
+                elif ctype == "playback_done":
+                    playback_done_event.set()
+                continue
+
+            if "bytes" not in message:
+                continue
+            raw: bytes = message["bytes"]
+            if not raw:
+                continue
+
+            chunk_rms = _rms(raw)
+            voiced = chunk_rms >= rms_threshold
+
+            # ── Barge-in detection while agent is speaking ───────────────────
+            if agent_speaking.is_set():
+                if voiced:
+                    voiced_samples_during_agent += len(raw) // 2
+                    if voiced_samples_during_agent >= barge_in_samples_required:
+                        if not interrupt_event.is_set():
+                            logger.info(
+                                "Barge-in detected after %d ms voiced (rms=%.0f, threshold=%.0f) — interrupting agent",
+                                (voiced_samples_during_agent * 1000) // SAMPLE_RATE,
+                                chunk_rms, rms_threshold,
+                            )
+                            interrupt_event.set()
+                        # Start buffering this speech so the next turn includes it.
+                        speech_detected = True
+                        silence_samples = 0
+                        speech_buffer.extend(raw)
+                else:
+                    # Reset barge-in counter on silence
+                    voiced_samples_during_agent = max(
+                        0, voiced_samples_during_agent - len(raw) // 2
+                    )
+                continue
+
+            # ── Normal VAD when agent is not speaking ────────────────────────
+            if voiced:
+                speech_detected = True
+                silence_samples = 0
+                speech_buffer.extend(raw)
+            else:
+                if not speech_detected:
+                    continue
+                silence_samples += len(raw) // 2
+                speech_buffer.extend(raw)
+                if silence_samples < silence_samples_threshold:
+                    continue
+
+                # End of speech
+                pcm_snapshot = bytes(speech_buffer)
+                speech_buffer.clear()
+                silence_samples = 0
+                speech_detected = False
+                voiced_samples_during_agent = 0
+
+                if len(pcm_snapshot) < SAMPLE_RATE // 4:
+                    continue  # < 250 ms noise burst — drop
+                await user_speech_queue.put(pcm_snapshot)
+
+    # ── Agent turn: filler + ASR + LLM/TTS — cancellable ──────────────────────
+    async def agent_turn(user_pcm: bytes) -> None:
+        agent_speaking.set()
+        interrupt_event.clear()
+        playback_done_event.clear()
+        sent_response_audio = False   # tracks whether response PCM reached the browser
+
+        try:
+            # Filler + ASR in parallel
+            filler_text = random.choice(_THINKING_FILLERS)
+            filler_task = asyncio.create_task(_synth_flash(filler_text, voice_id))
+            asr_task    = asyncio.create_task(_transcribe(user_pcm))
+
+            try:
+                filler_audio = await asyncio.wait_for(filler_task, timeout=3.0)
+                for i in range(0, len(filler_audio), 4096):
+                    if interrupt_event.is_set():
+                        break
+                    await websocket.send_bytes(filler_audio[i : i + 4096])
+            except Exception as exc:
+                logger.warning("Filler TTS failed: %s", exc)
+
+            transcript = await asr_task
+            if not transcript:
+                logger.warning("ASR returned empty transcript — skipping turn")
+                return
+
+            if interrupt_event.is_set():
+                return
+
+            logger.info("User: %s", transcript)
+            await websocket.send_text(json.dumps({
+                "type": "transcript", "role": "user", "text": transcript,
+            }))
+            history.append({"role": "user", "content": transcript})
+
+            await websocket.send_text(json.dumps({"type": "agent_start"}))
+            # Clear the playback_done_event so the finally block waits for the
+            # *response* audio, not the filler ack that arrived during LLM wait.
+            playback_done_event.clear()
+
+            agent_text = ""
+            try:
+                client = get_async_client()
+                response = await client.messages.create(
+                    model=get_model(),
+                    max_tokens=1024,
+                    system=system_prompt,
+                    messages=_trim_history(history),
+                )
+                agent_text = _XML_TAG_RE.sub(
+                    "", response.content[0].text if response.content else ""
+                ).strip()
+            except Exception as exc:
+                logger.error("LLM error: %s", exc)
+                await websocket.send_text(json.dumps({
+                    "type": "error", "detail": "Response generation failed"
+                }))
+
+            if agent_text and not interrupt_event.is_set():
+                try:
+                    await _stream_tts_to_ws(
+                        agent_text, voice_id, FLASH_MODEL, websocket,
+                        interrupt_event=interrupt_event,
+                    )
+                    sent_response_audio = True
+                except Exception as exc:
+                    logger.error("Flash TTS failed: %s", exc)
+
+            history.append({
+                "role": "assistant",
+                "content": agent_text or "I'm sorry, I had a little trouble there.",
+            })
+            if agent_text:
+                logger.info(
+                    "Agent (%d words, interrupted=%s): %s",
+                    len(agent_text.split()), interrupt_event.is_set(), agent_text[:200],
+                )
+
+            await websocket.send_text(json.dumps({
+                "type": "agent_end",
+                "text": agent_text or "",
+                "interrupted": interrupt_event.is_set(),
+            }))
+        finally:
+            # Notify browser to flush queued audio if we aborted mid-stream.
+            if interrupt_event.is_set():
+                try:
+                    await websocket.send_text(json.dumps({"type": "interruption"}))
+                except Exception:
+                    pass
+                # On interrupt, don't wait for playback ack — browser just flushed.
+                agent_speaking.clear()
+                return
+
+            # Wait for the browser to confirm the *response* audio queue has
+            # drained before releasing the mic gate.  Only wait if we actually
+            # sent response audio; for empty/error turns clear immediately.
+            if sent_response_audio:
+                try:
+                    await asyncio.wait_for(
+                        playback_done_event.wait(), timeout=_PLAYBACK_DONE_TIMEOUT_S
+                    )
+                except asyncio.TimeoutError:
+                    logger.debug("playback_done ack timed out — releasing gate")
+            agent_speaking.clear()
+
+    # ── Greeting (Flash for fast first impression) ────────────────────────────
+    # Start mic_task FIRST so it can process `playback_done` ack and barge-in
+    # during the greeting itself.
+    agent_speaking.set()
+    interrupt_event.clear()
+    playback_done_event.clear()
+    mic_runner = asyncio.create_task(mic_task(), name="mic_task")
+
     await websocket.send_text(json.dumps({
         "type": "session_ready",
         "first_message": first_message,
@@ -402,131 +813,56 @@ async def hybrid_voice_ws(
     }))
     await websocket.send_text(json.dumps({"type": "agent_start"}))
     try:
-        await _stream_tts_to_ws(first_message, voice_id, FLASH_MODEL, websocket)
+        await _stream_tts_to_ws(
+            first_message, voice_id, FLASH_MODEL, websocket,
+            interrupt_event=interrupt_event,
+        )
     except Exception as exc:
         logger.warning("Greeting TTS failed: %s", exc)
-    await websocket.send_text(json.dumps({"type": "agent_end", "text": first_message}))
+    await websocket.send_text(json.dumps({
+        "type": "agent_end", "text": first_message,
+        "interrupted": interrupt_event.is_set(),
+    }))
 
-    # History must start with a user message (Anthropic API requirement).
-    # The synthetic "[call started]" seeds proper user/assistant alternation.
-    history: list[dict] = [
-        {"role": "user",      "content": "[call started]"},
-        {"role": "assistant", "content": first_message},
-    ]
+    if interrupt_event.is_set():
+        # Greeting was barged-in — flush browser queue and skip ack wait.
+        try:
+            await websocket.send_text(json.dumps({"type": "interruption"}))
+        except Exception:
+            pass
+        agent_speaking.clear()
+    else:
+        # Wait for browser to ack greeting playback — or timeout.
+        try:
+            await asyncio.wait_for(
+                playback_done_event.wait(), timeout=_PLAYBACK_DONE_TIMEOUT_S
+            )
+        except asyncio.TimeoutError:
+            pass
+        agent_speaking.clear()
 
-    # ── VAD state ─────────────────────────────────────────────────────────────
-    rms_threshold = float(settings.FUSION_VAD_RMS_THRESHOLD)
-    silence_samples_threshold = (settings.FUSION_VAD_SILENCE_MS * SAMPLE_RATE) // 1000
-
-    speech_buffer = bytearray()
-    silence_samples = 0
-    speech_detected = False
-
-    # ── Conversation loop ─────────────────────────────────────────────────────
+    # ── Main turn loop ────────────────────────────────────────────────────────
     try:
-        while True:
-            message = await websocket.receive()
-
-            if message.get("type") == "websocket.receive" and "text" in message:
-                try:
-                    ctrl = json.loads(message["text"])
-                except json.JSONDecodeError:
-                    continue
-                if ctrl.get("type") == "interrupt":
-                    speech_buffer.clear()
-                    silence_samples = 0
-                    speech_detected = False
+        while not closing.is_set():
+            # Wait for either a queued user turn or a disconnect
+            try:
+                pcm = await asyncio.wait_for(user_speech_queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                if closing.is_set():
+                    break
                 continue
 
-            if message.get("type") != "websocket.receive" or "bytes" not in message:
-                continue
-
-            raw: bytes = message["bytes"]
-            if not raw:
-                continue
-
-            chunk_rms = _rms(raw)
-
-            if chunk_rms >= rms_threshold:
-                speech_detected = True
-                silence_samples = 0
-                speech_buffer.extend(raw)
-            else:
-                if not speech_detected:
-                    continue
-
-                silence_samples += len(raw) // 2
-                speech_buffer.extend(raw)
-
-                if silence_samples < silence_samples_threshold:
-                    continue
-
-                # ── End of speech ─────────────────────────────────────────────
-                pcm_snapshot = bytes(speech_buffer)
-                speech_buffer.clear()
-                silence_samples = 0
-                speech_detected = False
-
-                if len(pcm_snapshot) < SAMPLE_RATE // 4:
-                    continue  # < 250 ms — noise burst, skip
-
-                # Step 1: filler (Flash, ~75 ms TTFB) + ASR run in parallel.
-                filler_text = random.choice(_THINKING_FILLERS)
-                filler_task = asyncio.create_task(
-                    _synth_flash(filler_text, voice_id), name="filler_tts"
-                )
-                asr_task = asyncio.create_task(
-                    _transcribe(pcm_snapshot), name="asr"
-                )
-
-                # Step 2: send filler to browser as soon as it's synthesised.
-                try:
-                    filler_audio = await asyncio.wait_for(filler_task, timeout=3.0)
-                    for i in range(0, len(filler_audio), 4096):
-                        await websocket.send_bytes(filler_audio[i : i + 4096])
-                except Exception as exc:
-                    logger.warning("Filler TTS failed: %s", exc)
-
-                # Step 3: transcript
-                transcript = await asr_task
-                if not transcript:
-                    continue
-
-                logger.info("User: %s", transcript)
-                await websocket.send_text(json.dumps({
-                    "type": "transcript", "role": "user", "text": transcript,
-                }))
-                history.append({"role": "user", "content": transcript})
-
-                # Steps 4+5: LLM tokens stream directly into ElevenLabs WS TTS.
-                # First audio chunk reaches browser ~200 ms after first LLM token —
-                # before the filler finishes playing, so the gap is near zero.
-                await websocket.send_text(json.dumps({"type": "agent_start"}))
-                try:
-                    agent_text = await _stream_llm_tts_pipeline(
-                        system_prompt, history, voice_id, websocket
-                    )
-                except Exception as exc:
-                    logger.error("LLM/TTS pipeline error: %s", exc)
-                    await websocket.send_text(json.dumps({
-                        "type": "error", "detail": "Response generation failed"
-                    }))
-                    history.append({"role": "assistant", "content": ""})
-                    await websocket.send_text(json.dumps({"type": "agent_end", "text": ""}))
-                    continue
-
-                # Always append assistant turn to keep history alternating.
-                history.append({"role": "assistant", "content": agent_text or ""})
-                if agent_text:
-                    logger.info("Agent: %s", agent_text[:120])
-
-                await websocket.send_text(json.dumps({
-                    "type": "agent_end", "text": agent_text or ""
-                }))
+            await agent_turn(pcm)
 
     except WebSocketDisconnect:
         logger.info("Voice session disconnected (ad=%s)", advertisement_id)
     except Exception as exc:
         logger.error("Voice session error (ad=%s): %s", advertisement_id, exc)
     finally:
+        closing.set()
+        mic_runner.cancel()
+        try:
+            await mic_runner
+        except (asyncio.CancelledError, Exception):
+            pass
         await _finalise_session(db, voice_session, history)

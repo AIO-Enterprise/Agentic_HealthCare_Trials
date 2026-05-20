@@ -805,7 +805,7 @@ export default function CampaignCreator() {
           className="btn--accent"
           style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 24px" }}
         >
-          {step === 6 ? (loading ? <><span className="spinner" /> {uploadProgress || "Creating…"}</> : "Create Campaign") : <>Next <ArrowRight size={14} /></>}
+          {step === 5 ? (loading ? <><span className="spinner" /> {uploadProgress || "Creating…"}</> : "Create Campaign") : <>Next <ArrowRight size={14} /></>}
         </button>
       </div>
     );

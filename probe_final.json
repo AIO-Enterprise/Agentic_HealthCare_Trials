@@ -1,0 +1,6 @@
+{
+  "containerOverrides": [{
+    "name": "backend",
+    "command": ["python", "-c", "from anthropic import AnthropicBedrock\nc = AnthropicBedrock(aws_region='us-east-1')\nids = [\n  'us.anthropic.claude-sonnet-4-6',\n  'us.anthropic.claude-sonnet-4-5-20250929-v1:0',\n  'us.anthropic.claude-opus-4-1-20250805-v1:0',\n  'us.anthropic.claude-opus-4-5-20251101-v1:0',\n  'us.anthropic.claude-opus-4-6-v1',\n  'us.anthropic.claude-opus-4-7',\n  'us.anthropic.claude-haiku-4-5-20251001-v1:0',\n  'global.anthropic.claude-haiku-4-5-20251001-v1:0',\n  'global.anthropic.claude-sonnet-4-5-20250929-v1:0',\n  'global.anthropic.claude-opus-4-5-20251101-v1:0',\n  'global.anthropic.claude-opus-4-6-v1',\n  'global.anthropic.claude-sonnet-4-6',\n  'global.anthropic.claude-opus-4-7',\n]\nfor mid in ids:\n    try:\n        r = c.messages.create(model=mid, max_tokens=8, messages=[{'role':'user','content':'hi'}])\n        print('OK   ', mid)\n    except Exception as e:\n        code = '400' if 'invalid' in str(e) else ('403' if 'access is denied' in str(e) else ('404' if 'Legacy' in str(e) else '?'))\n        print('FAIL', code, mid)\n"]
+  }]
+}

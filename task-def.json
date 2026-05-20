@@ -55,7 +55,7 @@
   "containerDefinitions": [
     {
       "name": "backend",
-      "image": "809411919411.dkr.ecr.us-east-1.amazonaws.com/agentic_healthcare/backend:v12",
+      "image": "809411919411.dkr.ecr.us-east-1.amazonaws.com/agentic_healthcare/backend:sha-e4ed1f2",
       "portMappings": [{"containerPort": 8000, "protocol": "tcp"}],
       "essential": true,
       "mountPoints": [
@@ -67,7 +67,8 @@
       "environment": [
         {"name": "USE_BEDROCK",        "value": "true"},
         {"name": "AWS_REGION",         "value": "us-east-1"},
-        {"name": "BEDROCK_MODEL",      "value": "us.anthropic.claude-sonnet-4-6"},
+        {"name": "BEDROCK_MODEL",          "value": "us.anthropic.claude-sonnet-4-6"},
+        {"name": "BEDROCK_CURATOR_MODEL",  "value": "us.anthropic.claude-opus-4-6-v1"},
         {"name": "ELEVENLABS_VOICE_ID","value": "EXAVITQu4vr4xnSDxMaL"},
         {"name": "DEBUG",              "value": "false"},
         {"name": "ALLOWED_ORIGINS",    "value": "https://d2s8k22yb5c8me.cloudfront.net,http://localhost:5173,http://localhost:3000,http://localhost:8000"},

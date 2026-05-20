@@ -1,0 +1,6 @@
+{
+  "containerOverrides": [{
+    "name": "backend",
+    "command": ["python", "-c", "import boto3, json\nbr = boto3.client('bedrock', region_name='us-east-1')\nprint('--- INFERENCE PROFILES ---')\ntry:\n    for p in br.list_inference_profiles(maxResults=200).get('inferenceProfileSummaries', []):\n        if 'claude' in p['inferenceProfileId'].lower():\n            print(p['inferenceProfileId'], '|', p.get('status'))\nexcept Exception as e:\n    print('list_inference_profiles FAIL:', str(e)[:300])\nprint('--- FOUNDATION MODELS (claude only) ---')\ntry:\n    for m in br.list_foundation_models().get('modelSummaries', []):\n        if 'claude' in m['modelId'].lower() and 'on_demand' in (m.get('inferenceTypesSupported') or []):\n            print(m['modelId'])\nexcept Exception as e:\n    print('list_foundation_models FAIL:', str(e)[:300])\n"]
+  }]
+}

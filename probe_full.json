@@ -1,0 +1,6 @@
+{
+  "containerOverrides": [{
+    "name": "backend",
+    "command": ["python", "-c", "import boto3, os\nfrom anthropic import AnthropicBedrock\nbr = boto3.client('bedrock', region_name='us-east-1')\nprint('=== ALL CLAUDE INFERENCE PROFILES (paginated) ===')\ntoken = None\nwhile True:\n    kw = {'maxResults': 100}\n    if token: kw['nextToken'] = token\n    r = br.list_inference_profiles(**kw)\n    for p in r.get('inferenceProfileSummaries', []):\n        if 'claude' in p['inferenceProfileId'].lower():\n            print(p['inferenceProfileId'])\n    token = r.get('nextToken')\n    if not token: break\nprint()\nprint('=== INVOKE TEST: known-good Claude 4 candidates ===')\nc = AnthropicBedrock(aws_region='us-east-1')\nfor mid in ['us.anthropic.claude-opus-4-20250514-v1:0', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0', 'us.anthropic.claude-sonnet-4-20250514-v1:0', 'us.anthropic.claude-3-5-haiku-20241022-v1:0', 'us.anthropic.claude-sonnet-4-5-v1:0', 'us.anthropic.claude-opus-4-1-20250805-v1:0']:\n    try:\n        r = c.messages.create(model=mid, max_tokens=8, messages=[{'role':'user','content':'hi'}])\n        print('OK   ', mid)\n    except Exception as e:\n        print('FAIL ', mid, '->', str(e)[:120])\n"]
+  }]
+}

@@ -1,0 +1,6 @@
+{
+  "containerOverrides": [{
+    "name": "backend",
+    "command": ["python", "-c", "import os; from anthropic import AnthropicBedrock; c = AnthropicBedrock(aws_region=os.environ['AWS_REGION'])\nfor mid in ['us.anthropic.claude-sonnet-4-5-20250929-v1:0', 'us.anthropic.claude-opus-4-5-20250514-v1:0', 'us.anthropic.claude-sonnet-4-5-20250514-v1:0', 'us.anthropic.claude-opus-4-5-20250929-v1:0', 'us.anthropic.claude-sonnet-4-6-20251001-v1:0', 'us.anthropic.claude-opus-4-5', 'anthropic.claude-opus-4-5-20250929-v1:0', 'us.anthropic.claude-haiku-3-5-20241022']:\n    try:\n        r = c.messages.create(model=mid, max_tokens=8, messages=[{'role':'user','content':'hi'}])\n        print('OK   ', mid)\n    except Exception as e:\n        print('FAIL ', mid, '->', getattr(e,'status_code','?'), str(e)[:200])\n"]
+  }]
+}
